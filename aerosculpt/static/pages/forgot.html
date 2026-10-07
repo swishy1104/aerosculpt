@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reset password — AeroSculpt</title>
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/theme-init.js"></script>
+</head>
+<body data-page="forgot">
+<main class="auth-wrap"><div class="card pad-lg auth-card">
+  <h1>Reset your password</h1><p>We will email you a link to choose a new one.</p>
+  <form novalidate>
+    <div id="form-error" class="notice bad hidden" style="margin-bottom:14px"></div>
+    <label class="field"><span>Email</span><input type="email" name="email" autocomplete="email" required autofocus></label>
+    <button class="btn primary block" type="submit">Send reset link</button>
+    <p class="small" style="margin:14px 0 0"><a href="/login">Back to sign in</a></p>
+  </form>
+</div></main>
+<script type="module" src="/static/js/auth.js"></script>
+</body></html>

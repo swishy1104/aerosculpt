@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guide — AeroSculpt</title>
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/theme-init.js"></script>
+</head>
+<body>
+<main class="container narrow prose" style="padding:48px 20px 80px">
+  <div class="kicker">Guide</div>
+  <h1 style="font-size:40px">Using AeroSculpt</h1>
+  <p>AeroSculpt has three wind tunnels; pick one with the switch at the top of the workspace, and change it whenever you like.</p>
+  <table class="tbl"><thead><tr><th>Tunnel</th><th>Speeds</th><th>Use it for</th></tr></thead><tbody>
+    <tr><td><b style="color:var(--rc)">RC</b></td><td>2–60 m/s</td><td>Anything whose propeller matters: drag in the slipstream, thrust, power, top speed. <a href="#rc">Guide</a></td></tr>
+    <tr><td><b style="color:var(--accent-hover)">General</b></td><td>to Mach 1.2</td><td>Rockets, UAV fuselages, pods and fairings: drag across the envelope and shape optimization.</td></tr>
+    <tr><td><b style="color:var(--heat)">Supersonic</b></td><td>Mach 1.2–12</td><td>Rockets, missiles, re-entry bodies: wave and base drag, heating, wall temperature against material limits. <a href="#supersonic">Guide</a></td></tr>
+  </tbody></table>
+  <p>Above each body's critical Mach number (typically 0.7–0.85) the General tunnel's drag is a transonic estimate that joins the Supersonic tunnel at Mach 1.2
+    (see <a href="#compressibility">compressibility</a>). The steps below are those of the General tunnel; the RC and Supersonic tunnels add their own.
+    Contents: <a href="#model">1 Model</a> · <a href="#protect">2 Protect</a> · <a href="#envelope">3 Flight envelope</a> ·
+    <a href="#simulate">4 Simulate</a> · <a href="#optimize">5 Optimize</a> · <a href="#templates">templates (named dimensions)</a> ·
+    <a href="#rockets">rockets</a> · <a href="#uav">fixed-wing UAVs</a> ·
+    <a href="#rc">RC tunnel</a> · <a href="#supersonic">Supersonic tunnel</a> · <a href="#physics">physics</a> · <a href="#limits">limits</a> · <a href="#api">API</a></p>
+
+  <h2 id="model">1. Model</h2>
+  <ul>
+    <li><b>Formats.</b> STL and OBJ are read on the server; STEP, IGES, BREP, 3MF, PLY and glTF are tessellated in your browser and uploaded as STL.</li>
+    <li><b>Units and orientation.</b> Pick the file's units and the axis the nose points along. The tunnel flow travels along +X with Z up; the blue arrow in the view shows it, and the nose should face it. Check the reported length — a UAV listed as 1,400 m means the file is in millimetres.</li>
+    <li><b>Watertight is best.</b> Closed shells give exact inside/outside tests and the volume and keep-inside checks. Open meshes still run as thin walls.</li>
+    <li><b>Assemblies are fine.</b> Wings pushed into a fuselage, fins into a body tube: shells are voxelized separately so overlaps never cancel.</li>
+  </ul>
+
+  <h2 id="protect">2. Protect</h2>
+  <p>Regions tell the optimizer what it must respect. Each is a box or a cylinder (cylinders run along the flow axis), with its centre and size in your model's own units. Add one, then click the model to place it and adjust the size.</p>
+  <table class="tbl"><thead><tr><th>Region</th><th>Effect</th><th>Typical use</th></tr></thead><tbody>
+    <tr><td><b style="color:var(--protect)">Protect</b></td><td>Geometry inside never moves; the change fades out smoothly around it so the surface never tears.</td><td>Screw holes, mounting faces, fins, rail buttons, camera windows, couplers</td></tr>
+    <tr><td><b style="color:var(--keep)">Keep inside</b></td><td>The volume must stay enclosed by the body. Shapes that would cut into it are rejected before any CFD is spent.</td><td>Payload bay, battery, motor tube, avionics sled</td></tr>
+    <tr><td><b style="color:var(--design)">Design only</b></td><td>If any exist, only geometry inside them may change.</td><td>Optimize just a nose cone, a pod or a fairing</td></tr>
+  </tbody></table>
+  <p>Volume limits (in step 5) add a global constraint on top: keep at least, and at most, a given share of the original volume.</p>
+
+  <h2 id="envelope">3. Flight envelope</h2>
+  <p>Instead of a single condition, you give an airspeed range and an angle-of-attack range, each with a number of points. Every result —
+    and every optimization — covers all combinations.</p>
+  <ul>
+    <li><b>Angles cost runs, speeds are (usually) free.</b> Each angle of attack is one CFD run. When the flight Reynolds number is above what the grid resolves (almost always for rockets and UAVs), the simulated coefficients do not depend on speed, so every airspeed comes from the same run: only the skin friction is re-scaled to each speed's Reynolds number.</li>
+    <li><b>Symmetric bodies.</b> If the body is mirror-symmetric top-to-bottom (most rockets and pods), negative angles are mirrored from the positive ones instead of being simulated again.</li>
+    <li><b>Altitude</b> sets air density and viscosity from the International Standard Atmosphere. <b>Sideslip</b> yaws the body.</li>
+    <li><b>Reference area</b> defaults to the frontal area. For UAVs enter the wing area to get conventional lift and drag coefficients.</li>
+    <li><b id="compressibility">Compressibility.</b> The CFD itself runs at low Mach number. Above Mach 0.3 every face's pressure is corrected with the
+      Kármán–Tsien rule and skin friction with the subsonic compressible flat-plate factor (1 − 0.1 M²). Each run also finds the body's <b>critical Mach number</b>,
+      where its lowest pressure first reaches sonic speed. Up to there the corrections are standard practice; above it, shocks form and the drag is a
+      <b>transonic estimate</b> — a smooth bridge from the corrected value to the supersonic surface methods at Mach 1.2 — with lift and moments held at their
+      critical-Mach values. Every condition is labelled incompressible, corrected or transonic estimate. The top speed is Mach 1.2.</li>
+  </ul>
+
+  <h2 id="simulate">4. Simulate</h2>
+  <table class="tbl"><thead><tr><th>Fidelity</th><th class="r">Tunnel cells</th><th class="r">Credits / run</th><th>Use it for</th></tr></thead><tbody>
+    <tr><td>Draft</td><td class="r">300,000</td><td class="r">1</td><td>Exploration, long optimizations</td></tr>
+    <tr><td>Standard</td><td class="r">1,000,000</td><td class="r">3</td><td>Design decisions</td></tr>
+    <tr><td>High</td><td class="r">2,500,000</td><td class="r">8</td><td>Final numbers, thin wings and fins</td></tr>
+    <tr><td>Ultra</td><td class="r">6,000,000</td><td class="r">20</td><td>Small features, publication</td></tr>
+  </tbody></table>
+  <p>Results include the drag polar (Cd against angle at each speed), lift curve and its slope CL<sub>α</sub>, L/D and where it peaks,
+    pitching moment and its slope Cm<sub>α</sub> (negative means statically stable about the body centre), drag and power at every speed,
+    a pressure/friction breakdown, and surface pressure, streamlines and slices at every angle. Use the α and V selectors at the bottom
+    of the 3D view to move between conditions.</p>
+
+  <h2 id="optimize">5. Optimize</h2>
+  <p>Choose the goal, what may change, how many parameters to optimize and a design budget. Every design is scored against your original at every
+    (angle, speed) condition, so the winner is better across the envelope, not just at one point. Runs are spent in four steps:</p>
+  <ol>
+    <li><b>Measure the error.</b> The original is re-run shifted by part of a grid cell. The scatter is the solver's run-to-run error for this body on this grid;
+      a change is only accepted when it beats twice that (or 0.2–0.4% for the deterministic models).</li>
+    <li><b>Screen.</b> Each free parameter is moved once by a quarter of its range, each alternative profile is tried once, and the parameters are ranked by
+      their effect. You see the ranking with the error line drawn on it. Only the top few (your choice) with a real effect go on.</li>
+    <li><b>Search.</b> A Gaussian-process model of the objective chooses each next design by expected improvement. It stops at the budget, or when several
+      designs in a row bring no gain larger than the error.</li>
+    <li><b>Confirm.</b> The best candidates and the original are re-run one level up — CFD bodies explore on a coarser grid and confirm at the fidelity you
+      chose; wings explore on a coarse wing model and confirm at full resolution. If the gain does not survive by more than the error, the result says
+      <i>no reliable improvement</i> and keeps your original.</li>
+  </ol>
+  <p>Every candidate is checked before it costs a run: your size and wall limits, the volume range, keep-inside and protected regions, a watertight surface
+    with no part passing through itself, and for winged designs stall and stability. Identical cases are never run twice (results are cached by a hash of
+    the geometry and settings), and each run starts from the previous flow field. Runs are not spread over several processes at once: one run already uses
+    every processor core.</p>
+  <table class="tbl"><thead><tr><th>Goal</th><th>Scores each design by</th></tr></thead><tbody>
+    <tr><td>Minimize drag across the envelope</td><td>average of drag ÷ original drag over all conditions</td></tr>
+    <tr><td class="muted">Maximize best L/D</td><td class="muted">the highest L/D anywhere in the envelope — <i>switched off until lift passes validation</i></td></tr>
+    <tr><td class="muted">Minimize drag, keep lift</td><td class="muted">average drag ratio, penalised wherever lift falls below the original — <i>switched off until lift passes validation</i></td></tr>
+  </tbody></table>
+  <p>An optimizer finds whatever the solver rewards. If the solver's lift is wrong, an L/D optimizer finds shapes that exploit the error rather than
+    shapes that fly better, so the lift-based goals stay off until the wing case on the <a href="/validation">validation page</a> passes.</p>
+  <table class="tbl" style="margin-top:14px"><thead><tr><th>Aspect</th><th>What changes</th></tr></thead><tbody>
+    <tr><td>Nose / forebody</td><td>Cross-section of the front third, sharper or fuller</td></tr>
+    <tr><td>Tail / aft-body</td><td>Boat-tail taper of the rear third (base drag)</td></tr>
+    <tr><td>Cross-section</td><td>Mid-body width and height independently</td></tr>
+    <tr><td>Length / fineness</td><td>Overall stretch along the flow</td></tr>
+    <tr><td>Camber</td><td>Nose droop and tail upsweep (for bodies at incidence)</td></tr>
+    <tr><td>Edge fairing</td><td>Rounds sharp edges by smoothing the surface</td></tr>
+  </tbody></table>
+  <p>On an uploaded mesh the parameters are these whole-body controls. <b>Hold the wing (planform) area</b> stops the optimizer from winning by shrinking a
+    wing. <b>Continue from this design</b> starts a new project from the winner for another round.</p>
+  <p><b>When the grid is too coarse.</b> On slender bodies the draft grid can put only a few cells across the body, and the measured error (±3–7%) can be
+    larger than what nose or tail changes achieve. The optimizer then reports no reliable improvement rather than a number made of noise; raise the fidelity,
+    or optimize noses in the Supersonic tunnel.</p>
+
+  <h2 id="templates">Templates: named dimensions</h2>
+  <p>Instead of uploading a mesh you can start from a <b>rocket</b>, <b>fixed-wing UAV</b> or <b>wing</b> template on the Projects page. Every dimension
+    is a parameter with a unit, a slider, a number box, an optimizer range and a lock; moving one rebuilds the geometry in milliseconds without
+    simulating anything. The optimizer changes the real dimensions and the result is a list of them, not just a mesh.</p>
+  <table class="tbl"><thead><tr><th>Group</th><th>Parameters</th></tr></thead><tbody>
+    <tr><td>Nose</td><td>Profile (conical, tangent ogive, elliptical, power law with its exponent, von Kármán / Haack with C), length, tip radius (a sphere tangent to the profile). Fineness ratio is shown.</td></tr>
+    <tr><td>Body / tail</td><td>Length, maximum diameter, boat-tail or taper length, base-to-body diameter</td></tr>
+    <tr><td>Wing</td><td>Span, root and tip chord, leading-edge sweep, NACA 4-digit (camber, its position, thickness) or 5-digit (design lift coefficient, camber position, thickness) section, dihedral, twist, incidence, position along and up the body</td></tr>
+    <tr><td>Tail surfaces, fins</td><td>Spans, chords, position, incidence; fin count, chords, span, sweep and thickness (locked by default)</td></tr>
+  </tbody></table>
+  <p>The NACA formulas take any value, so the optimizer can settle on 2.3% camber at 38% and 10.4% thickness; the result names the nearest catalogue section
+    (“≈ NACA 2410”). Which section is “most efficient” depends on the lift you need, which is why wings are optimized for <b>drag at fixed lift</b>:
+    give the flight mass (or the original design’s lift is kept) and each design flies at the angle that carries it. The thinnest symmetric section has the
+    least drag at zero lift but is no use for flying, and a smaller wing only wins if it can still carry the load without stalling.</p>
+  <p><b>How wings are scored.</b> The 3D CFD cannot rank airfoils — good sections differ by a few thousandths in drag — and its thin-wing lift is not validated,
+    so winged templates use the <a href="/validation#wing">wing model</a>: a vortex lattice for lift and induced drag, NeuralFoil for each strip’s section drag
+    at its own lift and Reynolds number, and Hoerner’s method for the fuselage. A design takes about a second, so large budgets cost almost nothing. Stall
+    (any strip above 92% of its section’s maximum lift) and stability (the neutral point may move at most 5% of the mean chord) are checked on every design.
+    Not modelled: propeller slipstream on the wing, pitch trim, structure — set a minimum wall thickness for the thinnest section you can build.</p>
+  <p><b>Noses.</b> At supersonic speed the nose profile matters: the Supersonic tunnel marches second-order shock-expansion theory along each meridian, validated
+    on cones and ogives. Subsonic, nose shape changes little as long as the flow stays attached, so the UAV template locks its nose profile by default.</p>
+
+  <h2 id="rockets">Rockets</h2>
+  <ul>
+    <li>Protect the fins (one box around the fin can) and any rail buttons; add a keep-inside cylinder for the motor tube.</li>
+    <li>Sweep 0–6° (or ±6°: symmetry makes the negative side free) across your boost speed range. Below the critical Mach number the drag is
+      compressibility-corrected; through Mach 1 it is an estimate, and above Mach 1.2 use the Supersonic tunnel.</li>
+    <li>Optimize <i>nose</i> and <i>tail</i> for lowest drag — or start from the rocket template so the optimizer changes the nose profile, length, tip radius and
+      boat-tail directly. Cm<sub>α</sub> is shown but is indicative only; confirm stability margin of the optimized design with a Barrowman-method tool such as OpenRocket.</li>
+  </ul>
+  <h2 id="uav">Fixed-wing UAVs</h2>
+  <ul>
+    <li>Set the reference area to the wing area and the reference length to the mean aerodynamic chord (the samples do this). Sweep from just below zero lift to beyond cruise angle (for example −2° to 8°) at your cruise speeds.</li>
+    <li>Protect wing roots, hard points and servo hatches; keep the payload bay and battery inside.</li>
+    <li>Optimize the fuselage, pods and fairings for drag; protect the wing roots so the wing itself is not reshaped.</li>
+    <li>Treat the CFD’s lift, L/D and pitching moment as indicative: on thin wings the simulated lift is currently 50–66% low at every fidelity (see <a href="#limits">limitations</a>).
+      To size and shape the wing itself, start from the UAV or wing <a href="#templates">template</a>: those are optimized with the validated wing model at fixed lift.</li>
+  </ul>
+
+  <h2 id="rc">RC tunnel: propellers</h2>
+  <p>The General tunnel plus spinning propellers. Each propeller is described the way it is sold — blade family, diameter and pitch in inches, blade count
+    (2–6), rpm and rotation — and placed where it will really be.</p>
+  <ul>
+    <li><b>Placing and moving</b>: <i>Click to place</i> puts the hub where you click the model and, by default, onto the centre line of the part you clicked
+      (fuselage nose, nacelle). After that, <i>Move in 3D</i> shows a drag handle with an arrow per axis, the <i>Nudge</i> buttons move it by the chosen step
+      (1 mm to 5 cm), <i>Snap to</i> puts it on the centre line, just ahead of the nose (tractor) or just behind the tail (pusher), and you can type the
+      hub position. Duplicate a propeller to make a mirrored twin with opposite rotation.</li>
+    <li><b>Blade families</b>: <i>thin electric</i> (slim, tapered, APC-style) and <i>wide blade</i> (broad constant chord, scale and multirotor style). Each has
+      a measured planform and section aerodynamics fitted on one propeller. Checked against UIUC wind-tunnel data: three APC props within 8%, and the same
+      wide blade with 2, 3 and 4 blades within 4% — the model reproduces the measured blade-count effect (3 blades +29%, 4 blades +56% thrust at the
+      same advance ratio). Five and six blades are extrapolated.</li>
+    <li><b>Live estimate</b>: each propeller card shows its free-air thrust, shaft power, efficiency and slipstream speed at your envelope's airspeeds, and a
+      comparison table when there are several, so you can choose options before spending a CFD run.</li>
+    <li><b>Thrust and torque</b> come from blade-element momentum theory with Prandtl tip and hub losses.</li>
+    <li><b>The slipstream</b>: that loading is added to the CFD as an actuator disk — axial thrust and swirl spread over a thin disk of cells — so the airframe
+      is tested inside the propwash. The far-wake speed matches momentum theory within 1%. Individual blades are not resolved.</li>
+    <li><b>Runs</b>: the propeller loading depends on the advance ratio J = V/(nD), so with propellers turning every angle and airspeed is its own CFD run.</li>
+    <li><b>Results</b>: thrust, shaft power, propeller efficiency and advance ratio at every condition, airframe drag in the slipstream, thrust against drag,
+      and the estimated level top speed where they cross. Flow fields are shown at the middle airspeed.</li>
+    <li><b>Limits</b>: no static thrust (the lowest airspeed is 2 m/s); the propeller axis follows the airframe, with axial inflow only (no P-factor);
+      heavily loaded propellers slow the lattice down to stay in its low-Mach range, which makes runs longer. Wing lift carries the General tunnel's caveat.</li>
+  </ul>
+
+  <h2 id="supersonic">Supersonic tunnel: shock, heat and materials</h2>
+  <p>Above Mach 1.2 the flow is computed face by face on your mesh with the engineering methods used for conceptual supersonic and hypersonic design
+    (the S/HABP family), so a whole sweep takes seconds.</p>
+  <table class="tbl"><thead><tr><th>Where</th><th>Method</th></tr></thead><tbody>
+    <tr><td>Windward faces of bodies</td><td>Tangent cone (exact Taylor–Maccoll conical flow)</td></tr>
+    <tr><td>Windward faces of plate-like parts (wings, fins)</td><td>Tangent wedge (exact oblique shock)</td></tr>
+    <tr><td>Blunt noses and faces past shock detachment</td><td>Modified Newtonian, C<sub>p</sub> = C<sub>p,max</sub> sin²θ</td></tr>
+    <tr><td>Leeward faces</td><td>Prandtl–Meyer expansion, floored at the separated (base) pressure</td></tr>
+    <tr><td>Base</td><td>Empirical base pressure C<sub>p,b</sub> = −0.25/M</td></tr>
+    <tr><td>Skin friction and heating</td><td>Eckert reference temperature with each face's running length; laminar, turbulent or transition at a Reynolds number you set</td></tr>
+    <tr><td>Nose stagnation heating</td><td>Fay–Riddell, distributed over the nose cap with the local pressure (Lees)</td></tr>
+    <tr><td>Wall temperature</td><td>Radiative equilibrium with the material's emissivity, or a fixed wall temperature</td></tr>
+  </tbody></table>
+  <ul>
+    <li><b>Envelope</b>: a Mach range, an angle range and an altitude from 0 to 80 km (US Standard Atmosphere 1976).</li>
+    <li><b>Materials</b>: pick the skin material from the library (fibreglass, carbon fibre, aluminium, titanium, stainless steel, Inconel, silica tile,
+      carbon-carbon, UHTC, ablator) or define your own limit and emissivity. Give a nose cap or leading edge its own material with a <b>Material</b> region
+      in the Protect step. The Margin view colours every face by how far it is from its own material's limit.</li>
+    <li><b>Nose radius</b> drives stagnation heating (q ∝ 1/√R). It is measured from the mesh; sharp tips come out as small as the mesh allows, which is
+      physically right but mesh-dependent — enter the real tip radius if you know it.</li>
+    <li><b>Optimization</b> minimizes drag across the envelope or the peak wall temperature, and with <i>Respect material limits</i> on, designs that overheat
+      are penalised. Hundreds of designs are affordable: one credit per ten.</li>
+    <li><b>Accuracy</b>: sphere drag within 5% of free-flight data (Mach 4–10), thin-plate lift within 2% of linear theory, stagnation heating within 7% of
+      Sutton–Graves. Normal force on slender bodies is over-predicted at low supersonic Mach (+38% at Mach 2, +10% at Mach 4), so treat centre-of-pressure
+      positions there with care. Perfect gas: above Mach 6 real-gas chemistry starts to matter and temperatures are approximate. Not modelled: shock
+      interactions, one part shadowing another, transient heat soak (radiative equilibrium is the conservative steady state).</li>
+  </ul>
+
+  <h2 id="physics">How the solver works</h2>
+  <p>AeroSculpt builds a uniform voxel wind tunnel sized to the body (about 1.5 near-field lengths upstream and to the sides, 4 downstream,
+    with absorbing sponge layers; flat airframes are sized by their mean chord) and runs a 3D lattice-Boltzmann large-eddy simulation:
+    D3Q19 lattice, regularized collision, Smagorinsky sub-grid model and bulk-viscosity acoustic damping. Walls use interpolated (Bouzidi)
+    bounce-back on the true triangle surface, so forces change smoothly with shape. Forces come from momentum exchange with a blockage
+    correction, and each run continues until the windowed mean drag coefficient moves by less than 1%. Runs at the same angle
+    warm-start from each other's flow.</p>
+  <p><b>Two regimes.</b> Where the grid resolves the flight Reynolds number the simulated force is used directly. Above that the tunnel runs
+    at the highest Reynolds number the grid supports: pressure drag, lift and moments come from the simulation, while skin friction is
+    re-scaled to flight conditions with the Prandtl–Schlichting flat-plate law. See <a href="/validation">validation</a> for accuracy.</p>
+
+  <h2 id="limits">Limitations</h2>
+  <ul>
+    <li>The CFD is incompressible with compressibility corrections: sound to the critical Mach number, an estimate from there to Mach 1.2 (no shocks are
+      simulated). No heat transfer in the General tunnel; propellers in the RC tunnel only.</li>
+    <li>Boundary-layer transition is not predicted; very streamlined bodies at high Reynolds number come out conservative.</li>
+    <li><b>Lift on thin wings is under-predicted by 50–66%</b> (NACA 0012 wing, aspect ratio 6, against lifting-line theory). The tunnel resolves the boundary layer too coarsely,
+      so it separates early on the suction side. Lift, L/D and pitching moment are indicative only, and lift-based optimization goals are switched off until this is fixed.</li>
+    <li>Uniform grids under-resolve features much thinner than a cell; wings and fins thinner than about two cells are represented as one-cell walls.</li>
+    <li>Results are engineering estimates. Validate safety-critical designs with independent analysis or testing.</li>
+  </ul>
+
+  <h2 id="api">REST API (Team)</h2>
+  <p>Create a key under <a href="/app/account">Account</a> and send it as a bearer token. All endpoints return JSON.</p>
+<pre># upload a model (STL or OBJ bytes)
+curl -X POST "$HOST/api/projects?filename=uav.stl&amp;name=UAV" \
+  -H "Authorization: Bearer $KEY" --data-binary @uav.stl
+
+# sweep and optimize
+curl -X POST "$HOST/api/projects/$PROJECT/jobs" -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" -d '{
+    "kind": "optimize", "fidelity": "standard", "units": "mm", "forward": "-x", "up": "+z",
+    "envelope": {"speed_min": 15, "speed_max": 30, "speed_count": 4, "aoa_min": -2, "aoa_max": 8,
+                 "aoa_count": 5, "altitude": 500, "yaw": 0, "ref_area": 0.42},
+    "zones": [{"type": "keep", "shape": "box", "center": [320, 0, 10], "size": [180, 90, 70], "name": "payload"}],
+    "optimize": {"objective": "drag", "aspects": ["nose", "tail", "fairing"], "iterations": 20,
+                 "max_change": 0.25, "min_volume": 0.95, "max_volume": 1.5, "verify": "high"}}'
+
+# poll, then download the optimized geometry
+curl "$HOST/api/jobs/$JOB" -H "Authorization: Bearer $KEY"
+curl -o optimized.stl "$HOST/api/jobs/$JOB/files/optimized.stl" -H "Authorization: Bearer $KEY"</pre>
+  <p>Other files per job: <code>result.json</code> (polars for every angle and speed), <code>history.json</code>,
+    <code>fields_baseline_N.json</code> / <code>fields_best_N.json</code> (flow fields per simulated angle) and
+    <code>baseline_body.stl</code> / <code>best_body.stl</code>.</p>
+</main>
+<script type="module" src="/static/js/site.js"></script>
+</body>
+</html>

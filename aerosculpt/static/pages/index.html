@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AeroSculpt — Three wind tunnels: RC, subsonic CFD and supersonic to hypersonic</title>
+<meta name="description" content="Put your CAD in the tunnel that matches how it flies: an RC tunnel with spinning propellers, a 3D CFD tunnel to Mach 1.2, and a supersonic-to-hypersonic tunnel with heating and material limits. Sweep the envelope, then optimize the shape.">
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/theme-init.js"></script>
+</head>
+<body>
+<header class="hero">
+  <canvas class="flow-bg" id="flow" aria-hidden="true"></canvas>
+  <div class="container">
+    <div class="eyebrow">Three wind tunnels in one browser tab</div>
+    <h1>From RC trainers to <span class="gradient-text">hypersonic noses.</span></h1>
+    <p class="lead">Drop in your CAD, put it in the tunnel that matches how it flies, sweep its whole flight envelope — then let AeroSculpt
+      reshape it inside the limits you set: protected parts, payload volumes, propellers and material temperatures.</p>
+    <div class="cta">
+      <a class="btn primary lg" href="/signup">Start free</a>
+      <a class="btn lg" href="#tunnels">Choose a tunnel</a>
+    </div>
+    <div class="hero-tunnels" aria-label="The three tunnels">
+      <a href="#tunnel-rc" class="ht rc"><span class="tdot"></span>RC<small>2–60 m/s · spinning props</small></a>
+      <a href="#tunnel-general" class="ht general"><span class="tdot"></span>General<small>to Mach 1.2 · 3D CFD</small></a>
+      <a href="#tunnel-hyper" class="ht hyper"><span class="tdot"></span>Supersonic<small>Mach 1.2–12 · heat &amp; materials</small></a>
+    </div>
+  </div>
+</header>
+
+<section class="block" style="padding:40px 0">
+  <div class="container stat-band">
+    <div><div class="v">3 tunnels</div><div class="l">each with the physics that is honest for its speed range</div></div>
+    <div><div class="v">2 m/s → M12</div><div class="l">park flyers, UAVs and rockets up to hypersonic</div></div>
+    <div><div class="v">≤ 8%</div><div class="l">propeller thrust and power vs UIUC wind-tunnel data</div></div>
+    <div><div class="v">≤ 5%</div><div class="l">hypersonic sphere drag vs free-flight data, Mach 4–10</div></div>
+  </div>
+</section>
+
+<section class="block" id="tunnels">
+  <div class="container">
+    <div class="section-head center">
+      <div class="kicker">Pick your tunnel</div>
+      <h2>The right physics for every speed</h2>
+      <p>No single method is trustworthy from a park flyer to Mach 8, so AeroSculpt switches physics with the speed range — and labels every
+        number with the method that produced it.</p>
+    </div>
+
+    <div class="speed-ruler" role="img" aria-label="Speed coverage: RC tunnel 2 to 60 metres per second, General tunnel up to Mach 1.2 with a transonic estimate above about Mach 0.8, Supersonic tunnel from Mach 1.2 to 12">
+      <div class="lane"><span class="lane-l">RC</span><div class="track"><div class="band rc" style="left:0%;width:12%"></div></div></div>
+      <div class="lane"><span class="lane-l">General</span><div class="track"><div class="band general" style="left:0%;width:33.3%"></div>
+        <div class="band estimate" style="left:33.3%;width:6.7%"></div></div></div>
+      <div class="lane"><span class="lane-l">Supersonic</span><div class="track"><div class="band hyper" style="left:40%;width:60%"><span class="sub" style="left:46%">hypersonic →</span></div></div></div>
+      <div class="lane axis"><span class="lane-l"></span><div class="track">
+        <span style="left:0%">0</span><span style="left:12%">60 m/s</span><span style="left:30%">M 0.6</span><span style="left:40%">M 1.2</span>
+        <span style="left:68%">M 5</span><span style="left:100%">M 12</span></div></div>
+      <p class="caption"><span class="hatch"></span>Transonic, from the body's critical Mach number (typically 0.7–0.85) to Mach 1.2: an estimate that bridges the
+        compressibility-corrected CFD to the supersonic methods. It is the least accurate band and is labelled as such in every result.</p>
+    </div>
+
+    <div class="tunnel-cards">
+      <article class="tunnel-card rc" id="tunnel-rc">
+        <div class="tc-art" aria-hidden="true">
+          <svg viewBox="0 0 400 160" fill="none" stroke-linecap="round">
+            <g class="slip" stroke="var(--rc)" stroke-width="1.6">
+              <path d="M82 58 C 140 46, 190 70, 240 58 S 340 46, 398 58"/>
+              <path d="M82 102 C 140 114, 190 90, 240 102 S 340 114, 398 102"/>
+              <path class="s2" d="M82 70 C 150 62, 200 84, 260 72 S 350 64, 398 72"/>
+              <path class="s2" d="M82 90 C 150 98, 200 76, 260 88 S 350 96, 398 88"/>
+            </g>
+            <path d="M84 80 C 100 67, 130 65, 160 67 L 330 75 L 352 80 L 330 85 L 160 93 C 130 95, 100 93, 84 80 Z" fill="var(--surface-3)" stroke="var(--text-2)" stroke-width="1.4"/>
+            <path d="M148 71 L 236 71 L 234 77 L 150 77 Z" fill="var(--surface-4)" stroke="var(--text-2)" stroke-width="1"/>
+            <path d="M306 75 L 332 44 L 345 44 L 342 75 Z" fill="var(--surface-4)" stroke="var(--text-2)" stroke-width="1.2"/>
+            <ellipse cx="76" cy="80" rx="5" ry="36" fill="var(--rc)" fill-opacity=".12" stroke="var(--rc)" stroke-opacity=".55"/>
+            <rect class="blade b1" x="73" y="44" width="6" height="72" rx="3" fill="var(--text-2)"/>
+            <rect class="blade b2" x="73" y="44" width="6" height="72" rx="3" fill="var(--text-2)" opacity=".55"/>
+            <circle cx="76" cy="80" r="5.5" fill="var(--text)"/>
+          </svg>
+        </div>
+        <div class="tc-body">
+          <div class="tc-top"><span class="tc-chip"><span class="tdot"></span>RC tunnel</span><span class="tc-range">2–60 m/s</span></div>
+          <h3>Propellers turning</h3>
+          <p>Put each propeller where it will really be — then drag, nudge or snap it onto the centre line. Choose the blade family, size, pitch,
+            rpm and 2–6 blades; each spins in the CFD as an actuator disk with its own thrust and swirl.</p>
+          <ul>
+            <li>Two measured blade families: slim thin-electric and wide constant-chord</li>
+            <li>Live thrust, power and slipstream for each option before you run</li>
+            <li>Airframe drag measured inside each propeller's slipstream</li>
+            <li>Thrust against drag, and the estimated level top speed</li>
+          </ul>
+          <div class="tc-foot"><span class="tc-physics">3D CFD + blade-element propellers</span><a class="btn sm" href="/app?tunnel=rc">Open RC tunnel</a></div>
+        </div>
+      </article>
+
+      <article class="tunnel-card general" id="tunnel-general">
+        <div class="tc-art" aria-hidden="true">
+          <svg viewBox="0 0 400 160" fill="none" stroke-linecap="round">
+            <g class="flow" stroke="var(--accent)" stroke-width="1.5">
+              <path d="M6 40 C 120 40, 160 50, 398 50"/><path d="M6 64 C 110 64, 150 62, 398 66"/>
+              <path d="M6 96 C 110 96, 150 98, 398 94"/><path d="M6 120 C 120 120, 160 110, 398 110"/>
+            </g>
+            <path d="M74 80 C 108 60, 152 64, 164 64 L 296 64 L 316 68 L 316 92 L 296 96 L 164 96 C 152 96, 108 100, 74 80 Z" fill="var(--surface-3)" stroke="var(--text-2)" stroke-width="1.4"/>
+            <path d="M262 64 L 298 34 L 316 34 L 310 64 Z M262 96 L 298 126 L 316 126 L 310 96 Z" fill="var(--surface-4)" stroke="var(--text-2)" stroke-width="1.2"/>
+            <rect x="254" y="28" width="70" height="104" rx="6" stroke="var(--protect)" stroke-width="1.5" stroke-dasharray="5 4"/>
+            <rect x="140" y="70" width="70" height="20" rx="4" stroke="var(--keep)" stroke-width="1.5" stroke-dasharray="5 4"/>
+          </svg>
+        </div>
+        <div class="tc-body">
+          <div class="tc-top"><span class="tc-chip"><span class="tdot"></span>General tunnel</span><span class="tc-range">to Mach 1.2</span></div>
+          <h3>3D CFD to transonic</h3>
+          <p>The lattice-Boltzmann large-eddy wind tunnel: rockets, UAV fuselages, pods and fairings across a range of airspeeds and angles of attack,
+            compressibility-corrected up to the critical Mach number and estimated through the transonic drag rise.</p>
+          <ul>
+            <li>Drag polar, drag and power across the whole envelope</li>
+            <li>Surface pressure, streamlines and flow slices at every angle</li>
+            <li>Protect fins and mounts; keep payload bays and motor tubes inside</li>
+            <li>Bayesian shape optimization of nose, tail, section and length</li>
+          </ul>
+          <div class="tc-foot"><span class="tc-physics">Lattice-Boltzmann LES + Kármán–Tsien</span><a class="btn sm" href="/app?tunnel=general">Open General tunnel</a></div>
+        </div>
+      </article>
+
+      <article class="tunnel-card hyper" id="tunnel-hyper">
+        <div class="tc-art" aria-hidden="true">
+          <svg viewBox="0 0 400 160" fill="none" stroke-linecap="round">
+            <defs>
+              <radialGradient id="noseHeat" cx="50%" cy="50%" r="50%">
+                <stop offset="0" stop-color="#fff7d6"/><stop offset=".25" stop-color="#f6b93b"/><stop offset=".55" stop-color="#dc6532" stop-opacity=".85"/>
+                <stop offset="1" stop-color="#952b5c" stop-opacity="0"/></radialGradient>
+              <linearGradient id="skinHeat" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0" stop-color="#ee8e2a"/><stop offset=".28" stop-color="#bd4446"/><stop offset=".62" stop-color="#6a1b5e"/>
+                <stop offset="1" stop-color="var(--surface-3)"/></linearGradient>
+            </defs>
+            <g class="mach" stroke="var(--heat)" stroke-opacity=".25" stroke-width="1">
+              <path d="M150 70 L 380 22"/><path d="M220 66 L 396 40"/><path d="M150 90 L 380 138"/><path d="M220 94 L 396 120"/>
+            </g>
+            <path class="shock" d="M398 4 C 190 16, 74 40, 58 80 C 74 120, 190 144, 398 156" stroke="var(--heat)" stroke-width="2.2"/>
+            <path d="M68 80 C 68 75, 71 72, 77 71.4 L 336 50 L 336 110 L 77 88.6 C 71 88, 68 85, 68 80 Z" fill="url(#skinHeat)" stroke="var(--text-2)" stroke-width="1.2"/>
+            <circle class="glow" cx="70" cy="80" r="20" fill="url(#noseHeat)"/>
+            <text x="292" y="36" font-size="10" fill="var(--heat)" font-family="Inter" font-weight="700">BOW SHOCK</text>
+          </svg>
+        </div>
+        <div class="tc-body">
+          <div class="tc-top"><span class="tc-chip"><span class="tdot"></span>Supersonic tunnel</span><span class="tc-range">Mach 1.2–12</span></div>
+          <h3>Shock, heat and materials</h3>
+          <p>Wave, base and friction drag from Mach 1.2 into the hypersonic range, with aerodynamic heating and the wall temperature your skin
+            reaches — checked against each material's limit.</p>
+          <ul>
+            <li>Stagnation and surface heating, radiative-equilibrium wall temperature</li>
+            <li>Material library from fibreglass to carbon-carbon, or define your own</li>
+            <li>Material regions for nose caps and leading edges</li>
+            <li>Optimize for drag or peak temperature within material limits</li>
+          </ul>
+          <div class="tc-foot"><span class="tc-physics">Shock-expansion surface methods</span><a class="btn sm" href="/app?tunnel=supersonic">Open Supersonic tunnel</a></div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="compare">
+  <div class="container">
+    <div class="section-head">
+      <div class="kicker">Side by side</div>
+      <h2>What each tunnel gives you</h2>
+      <p>Accuracy figures are from the public <a href="/validation">validation suite</a>, run on every release.</p>
+    </div>
+    <div class="card compare-wrap">
+      <table class="compare">
+        <thead><tr><th></th><th class="c-rc">RC</th><th class="c-general">General</th><th class="c-hyper">Supersonic</th></tr></thead>
+        <tbody>
+          <tr><th>Speed range</th><td>2–60 m/s</td><td>up to Mach 1.2 (transonic estimate above the critical Mach)</td><td>Mach 1.2–12, up to 80 km</td></tr>
+          <tr><th>Physics</th><td>3D CFD with actuator-disk propellers (blade-element momentum theory, two measured blade families)</td>
+            <td>3D lattice-Boltzmann large-eddy simulation, Kármán–Tsien compressibility corrections</td>
+            <td>Tangent-cone/wedge, Newtonian, Prandtl–Meyer, Eckert, Fay–Riddell</td></tr>
+          <tr><th>Key outputs</th><td>Thrust, shaft power, prop efficiency, drag in the slipstream, top speed</td><td>Drag polar, drag and power vs speed, pressure and flow fields</td>
+            <td>Wave, base and friction drag, wall temperature, heat flux, centre of pressure</td></tr>
+          <tr><th>Optimizes</th><td>Airframe drag with the props turning</td><td>Drag across the envelope</td><td>Drag or peak temperature, within material limits</td></tr>
+          <tr><th>Typical sweep</th><td>Minutes (one run per angle and speed)</td><td>Minutes (one run per angle)</td><td>Seconds</td></tr>
+          <tr><th>Checked against</th><td>UIUC propeller data, 2–4 blades: thrust and power within 8%; slipstream vs momentum theory within 1%</td>
+            <td>Sphere drag within 5%, cube within 11%; streamlined bodies conservative</td>
+            <td>Sphere drag within 5%; thin-plate lift within 2%; stagnation heating within 7% of Sutton–Graves</td></tr>
+          <tr><th>Not yet trustworthy</th><td>Wing lift (see General)</td><td>Lift on thin wings, 50–66% low; the transonic band is an estimate</td><td>Low-supersonic body normal force; real-gas chemistry above Mach 6</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="how">
+  <div class="container">
+    <div class="grid-2" style="align-items:center;gap:56px">
+      <div>
+        <div class="kicker">How it works</div>
+        <h2>Four steps, whichever tunnel</h2>
+        <div class="steps stack" style="margin-top:26px">
+          <div class="step"><h3>Import</h3><p>Upload STL, STEP, IGES, OBJ or 3MF. Set the units and which way the nose points; the mesh is checked and repaired automatically.</p></div>
+          <div class="step"><h3>Constrain</h3><p>Protect screw holes, mounts and fins; keep the payload or motor inside; place propellers; give hot spots their own material.</p></div>
+          <div class="step"><h3>Sweep</h3><p>A range of airspeeds or Mach numbers and a range of angles of attack. Every result covers every combination.</p></div>
+          <div class="step"><h3>Optimize</h3><p>Choose what may change, how far, and how many designs to try. Download the winner in your own units and orientation.</p></div>
+        </div>
+      </div>
+      <div class="card pad-lg">
+        <div class="label">One project, any tunnel</div>
+        <p style="margin:8px 0 14px">Switch a project between tunnels at any time: test a sounding rocket subsonically, then take the same model through
+          Mach 4 and check its nose cone against the fibreglass limit.</p>
+        <div class="grid-2">
+          <div class="stat-tile"><div class="label">RC</div><div class="value" style="font-size:20px">T(V), P(V)</div><div class="small muted">thrust and power at every speed</div></div>
+          <div class="stat-tile"><div class="label">General</div><div class="value" style="font-size:20px">Cd(α, V)</div><div class="small muted">drag polar across the envelope</div></div>
+          <div class="stat-tile"><div class="label">Supersonic</div><div class="value" style="font-size:20px">T<sub>wall</sub>(M)</div><div class="small muted">against each material's limit</div></div>
+          <div class="stat-tile"><div class="label">All tunnels</div><div class="value" style="font-size:20px">−Δ drag</div><div class="small muted">optimized shape, exported</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="features">
+  <div class="container">
+    <div class="section-head center">
+      <div class="kicker">Everything in the box</div>
+      <h2>A test lab and a design optimizer, in the browser</h2>
+      <p>No meshing, no solver setup, no cluster to manage.</p>
+    </div>
+    <div class="grid-3">
+      <div class="card feature"><div class="ico" data-i="fan"></div><h3>Spinning propellers</h3>
+        <p>Blade-element momentum theory sized from the numbers on the propeller (10×7 at 9,000 rpm), injected into the CFD as thrust and swirl.</p></div>
+      <div class="card feature"><div class="ico" data-i="flame"></div><h3>Heating and materials</h3>
+        <p>Stagnation and surface heating, radiative-equilibrium skin temperature and a material library with service limits — or your own.</p></div>
+      <div class="card feature"><div class="ico" data-i="shieldlock"></div><h3>Constraints you can see</h3>
+        <p>Click the model to place protected regions, keep-inside volumes, propeller hubs and material regions. The optimizer respects all of them.</p></div>
+      <div class="card feature"><div class="ico" data-i="sliders"></div><h3>Whole-envelope sweeps</h3>
+        <p>Ranges of airspeed or Mach number and angle of attack instead of one point; designs are scored across all of it.</p></div>
+      <div class="card feature"><div class="ico" data-i="sparkles"></div><h3>Automatic redesign</h3>
+        <p>Bayesian optimization reshapes nose, tail, cross-section, length, camber or edges and learns which of them matter.</p></div>
+      <div class="card feature"><div class="ico" data-i="download"></div><h3>Export and report</h3>
+        <p>Download the optimized STL in your own units and orientation, plus a printable engineering report.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="container narrow" style="text-align:center">
+    <div class="kicker">Honest physics</div>
+    <h2>Validated against published data, open about its limits</h2>
+    <p>Every tunnel is checked against reference data on every release: sphere and cube drag, propeller wind-tunnel data,
+      linear supersonic theory and stagnation-heating correlations. Where a result is not yet trustworthy we say so, next to the number.</p>
+    <a class="btn" href="/validation">View validation results</a>
+  </div>
+</section>
+
+<section class="block">
+  <div class="container narrow faq">
+    <h2 style="text-align:center">Questions</h2>
+    <details><summary>Which tunnel should I use?</summary><p>Anything with a propeller that matters for its drag: the RC tunnel. Rockets, UAVs, pods and fairings up to Mach 1.2: the General tunnel.
+      Rockets, missiles, re-entry bodies and high-speed aircraft above Mach 1.2: the Supersonic tunnel. A project can switch tunnels at any time.</p></details>
+    <details><summary>How is the transonic range handled?</summary><p>The General tunnel's CFD is computed at low Mach number and corrected for compressibility
+      (Kármán–Tsien) face by face, which is sound up to the body's critical Mach number — where the flow first goes sonic, typically Mach 0.7–0.85 —
+      and that number is reported for every body. Above it, shocks form; the drag rise is estimated by bridging the corrected CFD to the supersonic surface
+      methods at Mach 1.2. That band is an estimate and is labelled as one in every result: a true transonic answer needs a compressible flow solver.</p></details>
+    <details><summary>How are propellers simulated?</summary><p>Each propeller's thrust and torque come from blade-element momentum theory using its diameter, pitch, blade count and rpm,
+      checked against UIUC wind-tunnel data for APC propellers. That loading is applied to the flow as an actuator disk, so the slipstream and its swirl wash over the airframe.
+      Blades are not resolved one by one.</p></details>
+    <details><summary>How hot can it get?</summary><p>The Supersonic tunnel runs to Mach 12 and 80 km. Above Mach 6 real-gas chemistry starts to matter and above Mach 8 it is significant;
+      the methods use a perfect gas, so temperatures there are flagged as approximate.</p></details>
+    <details><summary>What is a compute credit?</summary><p>One draft CFD run costs 1 credit (standard 3, high 8, ultra 20). In the General tunnel a run is one angle of attack; with propellers turning it is one angle and one airspeed.
+      A whole supersonic sweep costs 1 credit, and supersonic optimizations 1 credit per ten designs.</p></details>
+    <details><summary>Is the Lite plan really free?</summary><p>Yes: all three tunnels, 40 compute credits a month, one propeller, short optimizations, no card required.</p></details>
+    <details><summary>Who owns my designs?</summary><p>You do. Models and results are private to your account and deleted when you delete the project or your account.</p></details>
+  </div>
+</section>
+
+<section class="block" style="text-align:center;border-bottom:0">
+  <div class="container narrow">
+    <h2>Put your airframe in the right tunnel</h2>
+    <p>Free to start. Upgrade for more fidelity, more propellers, wider sweeps and export.</p>
+    <a class="btn primary lg" href="/signup">Create a free account</a>
+  </div>
+</section>
+<script type="module" src="/static/js/landing.js"></script>
+</body>
+</html>

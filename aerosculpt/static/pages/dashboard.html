@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects — AeroSculpt</title>
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/theme-init.js"></script>
+<!--IMPORTMAP-->
+</head>
+<body>
+<main class="page-app">
+  <div class="container">
+    <div class="row spread wrap" style="margin-bottom:22px">
+      <div><h2 style="margin:0">Projects</h2><p class="muted" style="margin:4px 0 0">Pick a tunnel, then upload a model or start from a sample. A project can switch tunnels later.</p></div>
+      <div class="row"><a class="btn" href="/docs">Guide</a><button class="btn primary" id="upload-btn" type="button">Upload model</button></div>
+    </div>
+    <div class="grid-4" id="tiles" style="margin-bottom:22px"></div>
+    <div id="welcome" class="hidden" style="margin-bottom:22px"></div>
+    <div class="tunnel-pick" id="tunnel-pick" role="radiogroup" aria-label="Tunnel for new projects">
+      <button type="button" role="radio" data-t="rc" class="tp rc"><span class="tp-ico" data-i="fan"></span><span><b>RC tunnel</b><small>Spinning propellers · 2–60 m/s</small></span></button>
+      <button type="button" role="radio" data-t="general" class="tp general"><span class="tp-ico" data-i="wind"></span><span><b>General tunnel</b><small>3D CFD · to Mach 1.2</small></span></button>
+      <button type="button" role="radio" data-t="supersonic" class="tp hyper"><span class="tp-ico" data-i="flame"></span><span><b>Supersonic tunnel</b><small>Heat &amp; materials · Mach 1.2–12</small></span></button>
+    </div>
+    <div class="dropzone" id="drop" tabindex="0" role="button" aria-label="Upload a model">
+      <div data-i="upload" style="color:var(--accent-hover)"></div>
+      <div class="big" id="drop-title">Drop a CAD or mesh file here</div>
+      <div class="muted small">STL · OBJ · STEP · IGES · BREP · 3MF · PLY · glTF — or click to browse</div>
+      <div id="drop-status" class="small" style="margin-top:10px;color:var(--text-2)"></div>
+      <input type="file" id="file" class="hidden">
+    </div>
+    <h3 style="margin:30px 0 4px">Or design from named dimensions</h3>
+    <p class="muted small">A parametric rocket, UAV or wing: every dimension is a slider with a lock and a range, and the optimizer changes the real
+      dimensions — nose profile and length, NACA section, span, chords, sweep — instead of stretching a mesh.</p>
+    <div class="grid-3" id="templates" style="margin-top:12px"></div>
+    <h3 style="margin:34px 0 12px">Your projects</h3>
+    <div class="grid-3" id="projects"><div class="card skeleton" style="height:220px"></div><div class="card skeleton" style="height:220px"></div></div>
+    <h3 style="margin:34px 0 4px">Start from a sample</h3>
+    <p class="muted small">Ready-made airframes with realistic flight envelopes: the quickest way to see a full sweep and optimization.</p>
+    <div id="samples" style="margin-top:12px"></div>
+  </div>
+</main>
+<script type="module" src="/static/js/dashboard.js"></script>
+</body>
+</html>

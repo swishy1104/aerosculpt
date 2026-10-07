@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report — AeroSculpt</title>
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/theme-init.js"></script>
+<style>
+  .report { max-width: 900px; margin: 0 auto; padding: 32px 20px 80px; }
+  .report h1 { font-size: 30px; margin-bottom: 4px; }
+  .report h2 { font-size: 19px; margin: 30px 0 12px; }
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .shots figure { margin: 0; }
+  .shots img { width: 100%; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); }
+  .shots figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  #render-host { position: absolute; left: -10000px; top: 0; width: 960px; height: 600px; }
+  @media print { .report { padding: 0; } .shots img { border-color: #ccc; } }
+</style>
+<!--IMPORTMAP-->
+</head>
+<body>
+<div class="report" id="report"><div class="skeleton" style="height:300px"></div></div>
+<div id="render-host"></div>
+<script type="module" src="/static/js/report.js"></script>
+</body>
+</html>

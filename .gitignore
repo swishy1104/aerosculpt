@@ -1,0 +1,18 @@
+# Local data: accounts, projects, results, the session secret and the database
+data/
+.env
+*.sqlite3
+
+# Local-only files
+tests/fixtures/dev_account.json
+Start public link.bat
+tools/cloudflared*
+.claude/
+
+# Python / numba caches
+__pycache__/
+*.py[cod]
+*.nbi
+*.nbc
+.pytest_cache/
+*.log

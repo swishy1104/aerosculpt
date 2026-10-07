@@ -1,0 +1,26 @@
+# Single-server production deployment: the app (web + CFD worker) behind Caddy, which
+# obtains and renews HTTPS certificates automatically. Set DOMAIN and fill in .env first.
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: "8000"
+      # only Caddy can reach the app container, so its X-Forwarded-For is trustworthy
+      FORWARDED_ALLOW_IPS: "*"
+    volumes:
+      - aerosculpt-data:/data
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to app:8000
+    volumes:
+      - caddy-data:/data
+    depends_on: [app]
+    restart: unless-stopped
+volumes:
+  aerosculpt-data:
+  caddy-data:

@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspace — AeroSculpt</title>
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/theme-init.js"></script>
+<!--IMPORTMAP-->
+</head>
+<body class="ws">
+<div class="ws-main" id="main">
+  <aside class="panel" id="left" aria-label="Setup">
+    <div class="tunnel-bar">
+      <div class="tunnel-switch" id="tunnel-switch" role="tablist" aria-label="Wind tunnel">
+        <button type="button" role="tab" data-t="general"><span class="tdot"></span>General</button>
+        <button type="button" role="tab" data-t="rc"><span class="tdot"></span>RC</button>
+        <button type="button" role="tab" data-t="supersonic"><span class="tdot"></span>Supersonic</button>
+      </div>
+      <p class="tunnel-note" id="tunnel-note"></p>
+    </div>
+    <div class="sec" data-sec="model">
+      <div class="sec-h"><span class="n">1</span><span class="t">Model</span><span class="s" id="s-model"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead">Your geometry and which way it flies. The blue arrow in the view is the airflow; the nose should face it.</p>
+        <div class="kv" id="model-kv" style="margin-bottom:14px"></div>
+        <div id="model-axes">
+        <label class="field"><span>File units</span>
+          <select id="units"><option value="mm">Millimetres</option><option value="cm">Centimetres</option><option value="m">Metres</option><option value="in">Inches</option><option value="ft">Feet</option></select></label>
+        <div class="two">
+          <label class="field"><span>Nose points along</span><select id="forward"></select></label>
+          <label class="field"><span>Up is</span><select id="up"></select></label>
+        </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec hidden" data-sec="params" data-template="1">
+      <div class="sec-h"><span class="n"></span><span class="t">Design parameters</span><span class="s" id="s-params"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b" id="params-box"></div>
+    </div>
+
+    <div class="sec closed" data-sec="protect">
+      <div class="sec-h"><span class="n">2</span><span class="t">Protect</span><span class="s" id="s-protect"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead">Mark what the optimizer must respect. Coordinates are in your model's own units.</p>
+        <div class="zone-add" id="zone-add"></div>
+        <div id="zones" style="margin-top:12px"></div>
+        <p class="small muted" id="zone-limit" style="margin:6px 0 0"></p>
+      </div>
+    </div>
+
+    <div class="sec" data-sec="props" data-tunnels="rc">
+      <div class="sec-h"><span class="n"></span><span class="t">Propellers</span><span class="s" id="s-props"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead">Each propeller spins as an actuator disk: blade-element thrust and swirl go into the flow, so the airframe is tested in its own slipstream.</p>
+        <button class="btn sm block" id="add-prop" type="button"></button>
+        <div id="props" style="margin-top:12px"></div>
+        <p class="small muted" id="prop-limit" style="margin:6px 0 0"></p>
+      </div>
+    </div>
+
+    <div class="sec" data-sec="envelope" data-tunnels="general rc">
+      <div class="sec-h"><span class="n">3</span><span class="t">Flight envelope</span><span class="s" id="s-envelope"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead">The airspeeds and angles of attack to test. Each angle is one CFD run; extra airspeeds come from the same run, so they are free.</p>
+        <span class="label">Airspeed (m/s)</span>
+        <div class="range3">
+          <label><span class="label muted">From</span><input type="number" id="speed_min" min="0.5" max="450" step="1"></label>
+          <label><span class="label muted">To</span><input type="number" id="speed_max" min="0.5" max="450" step="1"></label>
+          <label><span class="label muted">Points</span><input type="number" id="speed_count" min="1" step="1"></label>
+        </div>
+        <div class="range-preview" id="speed-chips"></div>
+        <span class="label" style="margin-top:16px">Angle of attack (°)</span>
+        <div class="range3">
+          <label><span class="label muted">From</span><input type="number" id="aoa_min" min="-30" max="30" step="0.5"></label>
+          <label><span class="label muted">To</span><input type="number" id="aoa_max" min="-30" max="30" step="0.5"></label>
+          <label><span class="label muted">Points</span><input type="number" id="aoa_count" min="1" step="1"></label>
+        </div>
+        <div class="range-preview" id="aoa-chips"></div>
+        <div class="two" style="margin-top:16px">
+          <label class="field"><span>Altitude</span><div class="input-unit"><input type="number" id="altitude" min="-500" max="20000" step="100"><span class="unit">m</span></div></label>
+          <label class="field"><span>Sideslip (yaw)</span><div class="input-unit"><input type="number" id="yaw" min="-30" max="30" step="0.5"><span class="unit">deg</span></div></label>
+        </div>
+        <label class="field"><span>Reference area for coefficients</span>
+          <div class="input-unit"><input type="number" id="ref_area" min="0" step="any" placeholder="Auto: frontal area"><span class="unit">m²</span></div></label>
+        <div class="kv" id="flow-kv"></div>
+      </div>
+    </div>
+
+    <div class="sec" data-sec="hyper-env" data-tunnels="supersonic">
+      <div class="sec-h"><span class="n"></span><span class="t">Flight envelope</span><span class="s" id="s-hyper-env"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead">Mach numbers, angles of attack and altitude. Surface methods are fast, so wide sweeps cost almost nothing.</p>
+        <span class="label">Mach number</span>
+        <div class="range3">
+          <label><span class="label muted">From</span><input type="number" id="h_mach_min" min="1.2" max="12" step="0.1"></label>
+          <label><span class="label muted">To</span><input type="number" id="h_mach_max" min="1.2" max="12" step="0.1"></label>
+          <label><span class="label muted">Points</span><input type="number" id="h_mach_count" min="1" step="1"></label>
+        </div>
+        <div class="range-preview" id="mach-chips"></div>
+        <span class="label" style="margin-top:16px">Angle of attack (°)</span>
+        <div class="range3">
+          <label><span class="label muted">From</span><input type="number" id="h_aoa_min" min="-20" max="20" step="0.5"></label>
+          <label><span class="label muted">To</span><input type="number" id="h_aoa_max" min="-20" max="20" step="0.5"></label>
+          <label><span class="label muted">Points</span><input type="number" id="h_aoa_count" min="1" step="1"></label>
+        </div>
+        <div class="range-preview" id="haoa-chips"></div>
+        <div class="two" style="margin-top:16px">
+          <label class="field"><span>Altitude</span><div class="input-unit"><input type="number" id="h_altitude" min="0" max="80" step="1"><span class="unit">km</span></div></label>
+          <label class="field"><span>Reference area</span><div class="input-unit"><input type="number" id="h_ref_area" min="0" step="any" placeholder="Frontal"><span class="unit">m²</span></div></label>
+        </div>
+        <div class="kv" id="hyper-kv"></div>
+      </div>
+    </div>
+
+    <div class="sec" data-sec="thermal" data-tunnels="supersonic">
+      <div class="sec-h"><span class="n"></span><span class="t">Thermal &amp; materials</span><span class="s" id="s-thermal"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead">The skin material sets the temperature the surface may reach. Give different parts their own material with a <b>Material</b> region in the Protect step.</p>
+        <label class="field"><span>Skin material</span><select id="h_material"></select></label>
+        <div id="material-info" class="kv" style="margin-bottom:12px"></div>
+        <div id="custom-material" class="hidden">
+          <label class="field"><span>Name</span><input type="text" id="cm_name" maxlength="60"></label>
+          <div class="two">
+            <label class="field"><span>Service limit</span><div class="input-unit"><input type="number" id="cm_tmax" step="10"><span class="unit">°C</span></div></label>
+            <label class="field"><span>Emissivity</span><input type="number" id="cm_eps" min="0.02" max="1" step="0.05"></label>
+          </div>
+        </div>
+        <span class="label">Wall temperature</span>
+        <div class="seg" id="h_wall" style="width:100%;display:flex"><button type="button" data-v="radiative" style="flex:1">Radiative equilibrium</button><button type="button" data-v="fixed" style="flex:1">Fixed</button></div>
+        <label class="field hidden" id="twall-row" style="margin-top:10px"><span>Wall held at</span><div class="input-unit"><input type="number" id="h_twall" step="10"><span class="unit">°C</span></div></label>
+        <span class="label" style="margin-top:12px">Boundary layer</span>
+        <div class="seg" id="h_transition" style="width:100%;display:flex"><button type="button" data-v="auto" style="flex:1">Transition</button><button type="button" data-v="laminar" style="flex:1">Laminar</button><button type="button" data-v="turbulent" style="flex:1">Turbulent</button></div>
+        <div class="two" style="margin-top:10px">
+          <label class="field" id="retr-row"><span>Transition Re<sub>x</sub></span><input type="number" id="h_retr" min="10000" step="100000"></label>
+          <label class="field"><span>Nose radius</span><div class="input-unit"><input type="number" id="h_rn" min="0" step="any" placeholder="From mesh"><span class="unit">mm</span></div></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="sec" data-sec="simulate">
+      <div class="sec-h"><span class="n">4</span><span class="t">Simulate</span><span class="s" id="s-simulate"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead">Run the virtual wind tunnel across the envelope: drag polar, lift curve, L/D and flow fields.</p>
+        <div id="fid-block">
+          <span class="label">Tunnel fidelity</span>
+          <div class="seg" id="fidelity" style="width:100%;display:flex"></div>
+          <div class="est" id="fid-note"></div>
+        </div>
+        <div id="panel-block" class="notice info hidden" style="margin:0"></div>
+        <button class="btn primary block" id="run-analyze" type="button" style="margin-top:14px"></button>
+        <div class="est" id="analyze-est"></div>
+      </div>
+    </div>
+
+    <div class="sec" data-sec="optimize">
+      <div class="sec-h"><span class="n">5</span><span class="t">Optimize</span><span class="s" id="s-optimize"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b">
+        <p class="lead" id="opt-lead">Reshape the body to beat the baseline across the whole envelope, inside your protected regions and volume limits.</p>
+        <label class="field"><span>Goal</span><select id="objective"></select></label>
+        <p class="small muted hidden" id="objective-note" style="margin:-4px 0 12px">Lift-based goals (best L/D, keep lift) are off until lift passes the
+          <a href="/validation" target="_blank">solver validation</a>: on thin wings the simulated lift is currently 50–66% low.</p>
+        <div id="opt-aspects">
+        <span class="label">What may change <span class="muted" id="aspect-limit"></span></span>
+        <div id="aspects"></div>
+        <label class="field" style="margin-top:12px"><span>Maximum shape change</span>
+          <div class="slider-row"><input type="range" id="max_change" min="5" max="50" step="1"><output id="max_change_o"></output></div></label>
+        </div>
+        <div id="opt-params" class="notice info hidden" style="margin:0 0 12px"></div>
+        <label class="field"><span>Optimize the most influential <span class="muted" id="topk-limit"></span></span>
+          <div class="slider-row"><input type="range" id="top_k" min="1" max="8" step="1"><output id="top_k_o"></output></div></label>
+        <label class="field"><span>Design budget (designs to try at most)</span>
+          <div class="slider-row"><input type="range" id="iterations" min="1" step="1"><output id="iterations_o"></output></div></label>
+        <div class="two">
+          <label class="field"><span>Keep volume at least</span><div class="slider-row"><input type="range" id="min_volume" min="50" max="100" step="1"><output id="min_volume_o"></output></div></label>
+          <label class="field"><span>Allow volume up to</span><div class="slider-row"><input type="range" id="max_volume" min="100" max="200" step="5"><output id="max_volume_o"></output></div></label>
+        </div>
+        <div id="opt-wing" class="hidden">
+          <label class="field"><span>Flight mass (lift to carry)</span><div class="input-unit"><input type="number" id="mass_kg" min="0" step="0.1" placeholder="Original design's lift"><span class="unit">kg</span></div></label>
+          <label class="check" style="margin:0 0 12px"><input type="checkbox" id="keep_stability"><span>Keep stability <span class="muted">(neutral point moves at most 5% of the mean chord)</span></span></label>
+        </div>
+        <details class="opt-limits"><summary class="label">Size and wall limits</summary>
+          <div class="three" style="margin-top:8px">
+            <label class="field"><span>Max length</span><div class="input-unit"><input type="number" id="max_length" min="0" step="any" placeholder="none"><span class="unit">mm</span></div></label>
+            <label class="field"><span>Max width</span><div class="input-unit"><input type="number" id="max_width" min="0" step="any" placeholder="none"><span class="unit">mm</span></div></label>
+            <label class="field"><span>Max height</span><div class="input-unit"><input type="number" id="max_height" min="0" step="any" placeholder="none"><span class="unit">mm</span></div></label>
+          </div>
+          <label class="field" id="thick-row"><span>Minimum wall thickness <span class="muted">(thinnest wing, tail or fin section)</span></span><div class="input-unit"><input type="number" id="min_thickness" min="0" step="any" placeholder="none"><span class="unit">mm</span></div></label>
+          <label class="check" id="wingarea-row" style="margin:0 0 8px"><input type="checkbox" id="hold_wing_area"><span>Hold the wing (planform) area <span class="muted">— stops the optimizer winning by shrinking the wing</span></span></label>
+        </details>
+        <label class="check hidden" id="respect-row" style="margin:4px 0 12px"><input type="checkbox" id="respect_limits">
+          <span>Respect material temperature limits <span class="muted">(designs that overheat are penalised)</span></span></label>
+        <label class="field" id="verify-row"><span>Re-check the winner at</span><select id="verify"></select></label>
+        <button class="btn primary block" id="run-optimize" type="button"></button>
+        <div class="est" id="optimize-est"></div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="viewport" id="vp" aria-label="3D view">
+    <div class="vp-toolbar">
+      <div class="vp-group" id="g-surface">
+        <button class="vbtn on" data-mode="shaded">Shaded</button>
+        <button class="vbtn" data-mode="wire">Mesh</button>
+        <button class="vbtn" data-mode="cp" disabled>Pressure</button>
+        <button class="vbtn cfd-only" data-mode="speed" disabled>Speed</button>
+        <button class="vbtn hyper-only" data-mode="temp" disabled>Temperature</button>
+        <button class="vbtn hyper-only" data-mode="flux" disabled>Heat flux</button>
+        <button class="vbtn hyper-only" data-mode="margin" disabled>Margin</button>
+        <button class="vbtn" data-mode="deform" disabled>Shape Δ</button>
+      </div>
+      <div class="vp-group hidden" id="g-shock">
+        <button class="vbtn" id="t-shock" disabled title="Mach cone from the nose: the far-field shock angle">Mach cone</button>
+      </div>
+      <div class="vp-group cfd-only" id="g-flow">
+        <button class="vbtn" id="t-stream" disabled>Streamlines</button>
+        <button class="vbtn" id="t-slice" disabled>Slice: off</button>
+        <button class="vbtn" id="t-slicefield" disabled>Slice: speed</button>
+      </div>
+      <div class="vp-group hidden" id="g-design">
+        <button class="vbtn" data-show="baseline">Baseline</button>
+        <button class="vbtn on" data-show="best">Optimized</button>
+        <button class="vbtn" data-show="overlay">Overlay</button>
+      </div>
+      <div class="vp-group" id="g-cam">
+        <button class="vbtn" id="t-zones" title="Show protected regions">Regions</button>
+        <button class="vbtn" data-view="iso" title="Isometric">Iso</button>
+        <button class="vbtn" data-view="front" title="Looking downstream">Front</button>
+        <button class="vbtn" data-view="side">Side</button>
+        <button class="vbtn" data-view="top">Top</button>
+        <button class="vbtn" id="snap" title="Save a PNG of the view" data-i="camera"></button>
+      </div>
+    </div>
+    <div class="pick-hint hidden" id="pick-hint">Click the model where this region should go · Esc to cancel</div>
+    <div class="vp-empty" id="vp-empty"><span class="spin"></span><span>Loading model…</span></div>
+    <div class="vp-info" id="vp-info"></div>
+    <div class="vp-cond hidden" id="vp-cond"></div>
+    <div class="vp-corner"><div class="colorbar hidden" id="colorbar"><div class="t"></div><div class="bar"></div><div class="ticks"></div></div></div>
+  </section>
+
+  <aside class="panel right" id="right" aria-label="Results">
+    <div class="panel-head">
+      <button class="tab on" data-tab="results">Performance</button>
+      <button class="tab" data-tab="history">Optimization</button>
+      <button class="tab" data-tab="runs">Runs</button>
+    </div>
+    <div id="tab-results" style="padding:16px"></div>
+    <div id="tab-history" class="hidden" style="padding:16px"></div>
+    <div id="tab-runs" class="hidden" style="padding:16px"></div>
+  </aside>
+</div>
+<footer class="statusbar" id="status">
+  <span class="badge" id="st-badge"><span class="dot"></span>Ready</span>
+  <div class="prog meter hidden" id="st-meter"><div style="width:0%"></div></div>
+  <span class="stage grow" id="st-stage">Check the model orientation, set the flight envelope, then simulate.</span>
+  <button class="btn sm danger hidden" id="st-cancel" type="button">Cancel</button>
+  <button class="btn sm ghost" id="st-log" type="button"><span data-i="terminal"></span>Log</button>
+  <button class="btn sm ghost hidden" id="st-results" type="button">Results</button>
+</footer>
+<div class="log-drawer hidden" id="log"></div>
+<script type="module" src="/static/js/workspace.js"></script>
+</body>
+</html>

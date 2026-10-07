@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — AeroSculpt</title>
+<link rel="icon" href="/static/img/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/js/theme-init.js"></script>
+</head>
+<body>
+<main class="page-app"><div class="container">
+  <h2>Business overview</h2>
+  <div class="grid-4" id="tiles" style="margin:18px 0 24px"></div>
+  <div class="grid-2">
+    <div class="card"><h3>Jobs</h3><div id="jobs"></div></div>
+    <div class="card"><h3>Users by plan</h3><div id="plans"></div></div>
+  </div>
+  <div class="card" style="margin-top:16px;overflow-x:auto"><h3>Recent sign-ups</h3><table class="tbl" id="recent"></table></div>
+</div></main>
+<script type="module" src="/static/js/admin.js"></script>
+</body>
+</html>
