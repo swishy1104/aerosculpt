@@ -63,6 +63,7 @@ export class Viewer {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     this.controls.update();
     if (this.particles && this.particles.visible) this._advanceParticles(dt);
+    if (this.wind) this._advanceWind(dt);
     for (const s of this.spinners) s.obj.rotateOnAxis(s.axis, s.rate * dt);
     this.renderer.render(this.scene, this.camera);
   }
@@ -91,6 +92,7 @@ export class Viewer {
     this.fields = {};
     this._bb = g.boundingBox.clone();
     this._ground();
+    this._rewind();
     if (fit) this.view("iso");
     this._fitted = true;
     this.setMode(this.mode in { shaded: 1, wire: 1 } ? this.mode : "shaded");
@@ -155,6 +157,7 @@ export class Viewer {
   applyTheme() {
     refreshColormaps();
     this._ground();
+    this._rewind();
     if (this.mode in this.fields) this._applyField(this.mode);
   }
 
@@ -192,8 +195,10 @@ export class Viewer {
   }
 
   // ---- protected regions ---------------------------------------------------------------------
-  /** zones: [{ color, matrix (THREE.Matrix4 placing a unit box/cylinder), shape, selected }] */
+  /** zones: [{ id, color, matrix (THREE.Matrix4 placing a unit box/cylinder), shape, selected }] */
   setZones(zones) {
+    const tool = this.zoneTool && !this.zoneTool.tc.dragging ? this.zoneTool : null;
+    if (tool) this.detachZoneTool(true);
     for (const c of [...this.zoneGroup.children]) {
       this.zoneGroup.remove(c);
       c.traverse((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); });
@@ -209,8 +214,58 @@ export class Viewer {
       g.add(fill, edges);
       g.applyMatrix4(z.matrix);
       g.renderOrder = 3;
+      g.userData.id = z.id;
+      fill.userData.zoneId = z.id;
       this.zoneGroup.add(g);
     }
+    if (tool && this._zoneToolArgs) this.attachZoneTool(...this._zoneToolArgs);
+  }
+
+  /** Zone id under the cursor, or null. */
+  pickZone(clientX, clientY) {
+    if (!this.zoneGroup.children.length) return null;
+    const r = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const fills = this.zoneGroup.children.map((g) => g.children[0]);
+    const hit = this.raycaster.intersectObjects(fills, false)[0];
+    return hit ? hit.object.userData.zoneId : null;
+  }
+
+  /** Move / rotate / resize gizmo on zone `id`. onChange({ position, quaternion, scale }) in display
+   *  axes while dragging; onEnd() on release. mode: "translate" | "rotate" | "scale". */
+  attachZoneTool(id, mode, { snap = false, onChange, onEnd } = {}) {
+    this.detachZoneTool(true);
+    const target = this.zoneGroup.children.find((g) => g.userData.id === id);
+    if (!target) return false;
+    const tc = new TransformControls(this.camera, this.renderer.domElement);
+    tc.setMode(mode);
+    tc.setSpace(mode === "translate" ? "world" : "local");
+    tc.setSize(0.85);
+    tc.setRotationSnap(snap ? THREE.MathUtils.degToRad(15) : null);
+    tc.setScaleSnap(snap ? 0.05 : null);
+    tc.attach(target);
+    tc.addEventListener("dragging-changed", (e) => {
+      this.controls.enabled = !e.value;
+      if (!e.value && onEnd) onEnd();
+    });
+    tc.addEventListener("objectChange", () => onChange && onChange({ position: target.position.clone(),
+      quaternion: target.quaternion.clone(), scale: target.scale.clone() }));
+    const helper = tc.getHelper ? tc.getHelper() : tc;
+    this.root.add(helper);
+    this.zoneTool = { tc, helper, id, target };
+    this._zoneToolArgs = [id, mode, { snap, onChange, onEnd }];
+    return true;
+  }
+
+  detachZoneTool(keepArgs = false) {
+    if (!this.zoneTool) return;
+    this.zoneTool.tc.detach();
+    this.root.remove(this.zoneTool.helper);
+    this.zoneTool.tc.dispose();
+    this.zoneTool = null;
+    this.controls.enabled = true;
+    if (!keepArgs) this._zoneToolArgs = null;
   }
 
   // ---- propellers (RC tunnel) ----------------------------------------------------------------
@@ -286,8 +341,10 @@ export class Viewer {
     if (!keepArgs) this._moverArgs = null;
   }
 
-  /** True while the gizmo is being dragged (so a click on it is not a model pick). */
-  get dragging() { return !!(this.mover && this.mover.tc.dragging); }
+  /** True while a gizmo is being dragged (so a click on it is not a model pick). */
+  get dragging() { return !!((this.mover && this.mover.tc.dragging) || (this.zoneTool && this.zoneTool.tc.dragging)); }
+  /** True while the pointer is over a gizmo handle. */
+  get overGizmo() { return !!((this.mover && this.mover.tc.axis) || (this.zoneTool && this.zoneTool.tc.axis)); }
 
   // ---- Mach cone (supersonic tunnel) ------------------------------------------------------------
   /** Cone of half-angle `angle` (rad) opening downstream (+x) from `apex`, `length` long. */
@@ -311,6 +368,90 @@ export class Viewer {
     g.renderOrder = 1;
     this.shock = g;
     this.root.add(g);
+  }
+
+  // ---- "tunnel running" animation ---------------------------------------------------------------
+  /** Air streaks flowing past the model while a job runs: potential flow around the model's
+   *  bounding ellipsoid. A picture of what the tunnel is doing, not a result. */
+  setWind(on, { fast = false } = {}) {
+    if (!on || !this._bb) {
+      if (this.wind) {
+        this.helpers.remove(this.wind.group);
+        this.wind.group.traverse((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); });
+        this.wind = null;
+      }
+      return;
+    }
+    if (this.wind) { this.wind.fast = fast; return; }
+    const bb = this._bb, c = bb.getCenter(new THREE.Vector3()), size = bb.getSize(new THREE.Vector3());
+    const m = Math.max(size.x, size.y, size.z) / 2 || 1;
+    const A = [size.x, size.y, size.z].map((s) => Math.max((s / 2) * 1.18, m * 0.06));   // ellipsoid half-axes
+    const x0 = c.x - A[0] - 1.1 * m, x1 = c.x + A[0] + 1.5 * m;
+    const ry = A[1] * 1.7 + 0.3 * m, rz = A[2] * 1.7 + 0.3 * m;
+    const N = 520;
+    const p = new Float32Array(N * 3), seg = new Float32Array(N * 6), col = new Float32Array(N * 8);
+    const spawn = (i, anywhere) => {
+      p[i * 3] = anywhere ? x0 + Math.random() * (x1 - x0) : x0 - Math.random() * 0.1 * (x1 - x0);
+      const t = Math.random() * 2 * Math.PI, r = Math.sqrt(Math.random());
+      p[i * 3 + 1] = c.y + Math.cos(t) * r * ry;
+      p[i * 3 + 2] = c.z + Math.sin(t) * r * rz;
+    };
+    for (let i = 0; i < N; i++) spawn(i, true);
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute("position", new THREE.BufferAttribute(seg, 3));
+    lineGeo.setAttribute("color", new THREE.BufferAttribute(col, 4));
+    const lines = new THREE.LineSegments(lineGeo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false }));
+    const ptGeo = new THREE.BufferGeometry();
+    ptGeo.setAttribute("position", new THREE.BufferAttribute(p, 3));
+    const pts = new THREE.Points(ptGeo, new THREE.PointsMaterial({ color: new THREE.Color(css("--accent")), size: m * 0.022,
+      sizeAttenuation: true, transparent: true, opacity: 0.7, depthWrite: false }));
+    const group = new THREE.Group();
+    group.add(lines, pts);
+    group.renderOrder = 2;
+    this.helpers.add(group);
+    const accent = new THREE.Color(css("--accent"));
+    this.wind = { group, lines, pts, p, seg, col, N, c, A, x0, x1, spawn, accent, fast, U: (x1 - x0) / 2.4 };
+  }
+
+  _rewind() {        // the model or theme changed: rebuild the streaks around it
+    if (!this.wind) return;
+    const fast = this.wind.fast;
+    this.setWind(false);
+    this.setWind(true, { fast });
+  }
+
+  _advanceWind(dt) {
+    const w = this.wind, { p, seg, col, c, A, x0, x1, accent } = w;
+    const U = w.U * (w.fast ? 2.2 : 1);
+    const tail = 0.11;
+    for (let i = 0; i < w.N; i++) {
+      let x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+      // flow past a unit sphere in ellipsoid-normalised coordinates
+      let ex = (x - c.x) / A[0], ey = (y - c.y) / A[1], ez = (z - c.z) / A[2];
+      let r2 = ex * ex + ey * ey + ez * ez;
+      if (r2 < 1) {                       // never inside the body: step out to the surface
+        const s = 1.001 / Math.sqrt(r2 || 1e-9);
+        ex *= s; ey *= s; ez *= s; r2 = 1.002;
+        x = c.x + ex * A[0]; y = c.y + ey * A[1]; z = c.z + ez * A[2];
+      }
+      const r3 = r2 * Math.sqrt(r2), r5 = r3 * r2;
+      const un = Math.max(1 + 0.5 / r3 - (1.5 * ex * ex) / r5, 0.12);
+      const vn = (-1.5 * ex * ey) / r5, wn = (-1.5 * ex * ez) / r5;
+      const vx = U * un, vy = U * vn * (A[1] / A[0]), vz = U * wn * (A[2] / A[0]);
+      x += vx * dt; y += vy * dt; z += vz * dt;
+      p[i * 3] = x; p[i * 3 + 1] = y; p[i * 3 + 2] = z;
+      if (x > x1) { w.spawn(i, false); continue; }
+      seg[i * 6] = x; seg[i * 6 + 1] = y; seg[i * 6 + 2] = z;
+      seg[i * 6 + 3] = x - vx * tail; seg[i * 6 + 4] = y - vy * tail; seg[i * 6 + 5] = z - vz * tail;
+      const u = (x - x0) / (x1 - x0);
+      const fade = Math.max(0, Math.min(1, u / 0.12, (1 - u) / 0.18));
+      const glow = Math.min(1, 0.55 + 0.45 * (un - 0.6));        // brighter where the flow speeds up
+      col[i * 8] = accent.r; col[i * 8 + 1] = accent.g; col[i * 8 + 2] = accent.b; col[i * 8 + 3] = 0.7 * fade * glow;
+      col[i * 8 + 4] = accent.r; col[i * 8 + 5] = accent.g; col[i * 8 + 6] = accent.b; col[i * 8 + 7] = 0;
+    }
+    w.lines.geometry.attributes.position.needsUpdate = true;
+    w.lines.geometry.attributes.color.needsUpdate = true;
+    w.pts.geometry.attributes.position.needsUpdate = true;
   }
 
   /** Point on the model under the cursor, in display coordinates (before mirroring). */
@@ -554,12 +695,31 @@ export function transposeMat3(R) {
   return [0, 1, 2].map((i) => [R[0][i], R[1][i], R[2][i]]);
 }
 
-/** THREE.Matrix4 that places a unit box/cylinder (centred, size 1) as a body-frame zone shown at rotation R. */
-export function zoneMatrix(centerBody, sizeBody, R) {
-  const m = new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1);
+const mat4 = (R) => new THREE.Matrix4().set(R[0][0], R[0][1], R[0][2], 0, R[1][0], R[1][1], R[1][2], 0, R[2][0], R[2][1], R[2][2], 0, 0, 0, 0, 1);
+
+/** Zone turn (roll, pitch, yaw in degrees about the body axes, applied x then y then z) as a
+ *  quaternion; mirrors geometry/zones.py rotation_matrix. */
+export function zoneQuaternion(rotDeg) {
+  const r = (rotDeg || [0, 0, 0]).map((a) => THREE.MathUtils.degToRad(a));
+  return new THREE.Quaternion().setFromEuler(new THREE.Euler(r[0], r[1], r[2], "ZYX"));
+}
+
+/** THREE.Matrix4 that places a unit box/cylinder (centred, size 1) as a body-frame zone, turned by
+ *  rotDeg about its centre, shown at display rotation R. */
+export function zoneMatrix(centerBody, sizeBody, R, rotDeg) {
   const t = new THREE.Matrix4().makeTranslation(centerBody[0], centerBody[1], centerBody[2]);
+  const q = new THREE.Matrix4().makeRotationFromQuaternion(zoneQuaternion(rotDeg));
   const s = new THREE.Matrix4().makeScale(Math.max(sizeBody[0], 1e-6), Math.max(sizeBody[1], 1e-6), Math.max(sizeBody[2], 1e-6));
-  return m.multiply(t).multiply(s);
+  return mat4(R).multiply(t).multiply(q).multiply(s);
+}
+
+/** Inverse of zoneMatrix for a gizmo edit: display-axes pose -> body centre, body size, turn (deg). */
+export function zoneFromPose({ position, quaternion, scale }, R) {
+  const Rt = new THREE.Quaternion().setFromRotationMatrix(mat4(R)).invert();
+  const c = position.clone().applyQuaternion(Rt);
+  const e = new THREE.Euler().setFromQuaternion(Rt.multiply(quaternion.clone()), "ZYX");
+  const deg = [e.x, e.y, e.z].map((a) => Math.round(THREE.MathUtils.radToDeg(a) * 10) / 10);
+  return { center: [c.x, c.y, c.z], size: [Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z)], rotation: deg };
 }
 
 export function parseSTL(buf) {

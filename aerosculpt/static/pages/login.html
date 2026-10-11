@@ -18,8 +18,13 @@
     <label class="field"><span>Email</span><input type="email" name="email" autocomplete="email" required autofocus></label>
     <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
     <button class="btn primary block" type="submit">Sign in</button>
-    <p class="small" style="margin:14px 0 0;display:flex;justify-content:space-between"><a href="/forgot">Forgot password?</a><a href="/signup">Create an account</a></p>
+    <p class="small" style="margin:14px 0 0;display:flex;justify-content:space-between"><a href="/forgot">Forgot password?</a><a href="/signup" id="signup-link">Create an account</a></p>
   </form>
+  <div class="guest-box hidden" id="guest-box">
+    <div class="or"><span>or</span></div>
+    <button class="btn block" type="button" id="guest-btn">Try the live demo — no account needed</button>
+    <p class="small muted" style="margin:8px 0 0;text-align:center">A temporary account with a few compute credits: start from a sample airframe or a template. It is deleted after a day.</p>
+  </div>
 </div></main>
 <script type="module" src="/static/js/auth.js"></script>
 </body></html>

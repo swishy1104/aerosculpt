@@ -20,8 +20,8 @@
     <p class="lead">Drop in your CAD, put it in the tunnel that matches how it flies, sweep its whole flight envelope — then let AeroSculpt
       reshape it inside the limits you set: protected parts, payload volumes, propellers and material temperatures.</p>
     <div class="cta">
-      <a class="btn primary lg" href="/signup">Start free</a>
-      <a class="btn lg" href="#tunnels">Choose a tunnel</a>
+      <a class="btn primary lg" href="/signup" data-start>Start free</a>
+      <a class="btn lg" href="#engineering">How it works inside</a>
     </div>
     <div class="hero-tunnels" aria-label="The three tunnels">
       <a href="#tunnel-rc" class="ht rc"><span class="tdot"></span>RC<small>2–60 m/s · spinning props</small></a>
@@ -33,7 +33,7 @@
 
 <section class="block" style="padding:40px 0">
   <div class="container stat-band">
-    <div><div class="v">3 tunnels</div><div class="l">each with the physics that is honest for its speed range</div></div>
+    <div><div class="v">≈ 3 s</div><div class="l">per 3D CFD run on a laptop GPU — a whole sweep in seconds, 12× the CPU</div></div>
     <div><div class="v">2 m/s → M12</div><div class="l">park flyers, UAVs and rockets up to hypersonic</div></div>
     <div><div class="v">≤ 8%</div><div class="l">propeller thrust and power vs UIUC wind-tunnel data</div></div>
     <div><div class="v">≤ 5%</div><div class="l">hypersonic sphere drag vs free-flight data, Mach 4–10</div></div>
@@ -242,6 +242,42 @@
   </div>
 </section>
 
+<section class="block" id="engineering">
+  <div class="container">
+    <div class="section-head center">
+      <div class="kicker">Under the hood</div>
+      <h2>Solvers and optimizer built from first principles</h2>
+      <p>No commercial CFD underneath: every method below is implemented in this codebase, tested, and checked against published data.</p>
+    </div>
+    <div class="grid-3 eng">
+      <div class="card feature"><div class="ico" data-i="cpu"></div><h3>GPU lattice-Boltzmann CFD</h3>
+        <p>D3Q19 regularized collision with a Smagorinsky large-eddy model and curved-wall (Bouzidi) boundaries. The CUDA and CPU kernels are generated from one
+          source and agree to 0.2 %; on a laptop GTX 1650 Ti the tunnel runs at about 400 million cell updates a second.</p>
+        <div class="eng-num"><b>9 s</b> 3-angle rocket sweep <span>vs 56 s on 6 CPU cores</span></div></div>
+      <div class="card feature"><div class="ico" data-i="target"></div><h3>An optimizer that knows its own error</h3>
+        <p>Before searching, it re-runs the baseline shifted by a fraction of a cell to measure the solver's noise, ranks every named parameter
+          in a screening pass, then searches the strongest ones with a Gaussian-process model. Gains smaller than twice the measured error are not reported.</p>
+        <div class="eng-num"><b>−7.7 %</b> supersonic rocket drag <span>28 designs in 30 s</span></div></div>
+      <div class="card feature"><div class="ico" data-i="plane"></div><h3>Wings at fixed lift</h3>
+        <p>Vortex-lattice lifting surfaces with NACA 4- and 5-digit sections, viscous section polars from a neural surrogate (NeuralFoil),
+          stall and stability margins, and a fuselage drag model — so a wing is never "improved" by simply lifting less.</p>
+        <div class="eng-num"><b>−15.8 %</b> wing drag at fixed lift <span>NACA 2412 → 2408</span></div></div>
+      <div class="card feature"><div class="ico" data-i="flame"></div><h3>Supersonic to Mach 12</h3>
+        <p>Second-order shock-expansion theory along each meridian, modified Newtonian flow, Fay–Riddell stagnation heating and
+          radiative-equilibrium skin temperature checked against each material's service limit.</p>
+        <div class="eng-num"><b>±7 %</b> ogive drag, Mach 1.5–4 <span>vs published data</span></div></div>
+      <div class="card feature"><div class="ico" data-i="fan"></div><h3>Propellers in the loop</h3>
+        <p>Blade-element momentum theory for each propeller, injected into the flow as an actuator disk with thrust and swirl, so the airframe is
+          tested in its own slipstream.</p>
+        <div class="eng-num"><b>≤ 8 %</b> thrust and power <span>vs UIUC wind-tunnel data</span></div></div>
+      <div class="card feature"><div class="ico" data-i="flask"></div><h3>Validation on every change</h3>
+        <p>54 reference cases — sphere and cube drag, a streamlined body, finite wings, NACA 0012, cones, ogives, stagnation heating and propellers —
+          re-run on the GPU in about four minutes. Failing cases stay on the public page.</p>
+        <div class="eng-num"><b>4 min</b> full validation suite <span>was ~60 min on the CPU</span></div></div>
+    </div>
+  </div>
+</section>
+
 <section class="block">
   <div class="container narrow" style="text-align:center">
     <div class="kicker">Honest physics</div>
@@ -266,7 +302,7 @@
       Blades are not resolved one by one.</p></details>
     <details><summary>How hot can it get?</summary><p>The Supersonic tunnel runs to Mach 12 and 80 km. Above Mach 6 real-gas chemistry starts to matter and above Mach 8 it is significant;
       the methods use a perfect gas, so temperatures there are flagged as approximate.</p></details>
-    <details><summary>What is a compute credit?</summary><p>One draft CFD run costs 1 credit (standard 3, high 8, ultra 20). In the General tunnel a run is one angle of attack; with propellers turning it is one angle and one airspeed.
+    <details><summary>What is a compute credit?</summary><p>One draft CFD run costs 1 credit (standard 3, high 8). In the General tunnel a run is one angle of attack; with propellers turning it is one angle and one airspeed.
       A whole supersonic sweep costs 1 credit, and supersonic optimizations 1 credit per ten designs.</p></details>
     <details><summary>Is the Lite plan really free?</summary><p>Yes: all three tunnels, 40 compute credits a month, one propeller, short optimizations, no card required.</p></details>
     <details><summary>Who owns my designs?</summary><p>You do. Models and results are private to your account and deleted when you delete the project or your account.</p></details>
@@ -277,7 +313,7 @@
   <div class="container narrow">
     <h2>Put your airframe in the right tunnel</h2>
     <p>Free to start. Upgrade for more fidelity, more propellers, wider sweeps and export.</p>
-    <a class="btn primary lg" href="/signup">Create a free account</a>
+    <a class="btn primary lg" href="/signup" data-start>Create a free account</a>
   </div>
 </section>
 <script type="module" src="/static/js/landing.js"></script>

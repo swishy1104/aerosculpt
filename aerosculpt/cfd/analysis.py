@@ -75,8 +75,43 @@ FIDELITY = {
     "draft": Fidelity("draft", 300_000, 2.0e4),
     "standard": Fidelity("standard", 1_000_000, 4.0e4),
     "high": Fidelity("high", 2_500_000, 8.0e4),
-    "ultra": Fidelity("ultra", 6_000_000, 1.5e5),
 }
+# retired levels still found in saved projects and queued jobs
+RETIRED = {"ultra": "high"}
+
+
+def fidelity_name(name):
+    """A user-facing fidelity name, with retired levels mapped onto their replacement."""
+    name = RETIRED.get(name, name)
+    if name not in FIDELITY or FIDELITY[name].internal:
+        raise KeyError(name)
+    return name
+
+
+def throughput(cells=300_000, steps=150):
+    """Measured lattice updates per second of the tunnel this machine uses (CPU or GPU), on a
+    draft-sized grid around a sphere. Used for the run-time estimates shown before a job."""
+    import time
+    from ..geometry.samples import icosphere
+    from .gpu import device_name, make_tunnel
+    mesh = icosphere(0.5, 2)
+    lo, hi = mesh.bbox()
+    ev = Evaluator(lo, hi, projected_area(mesh, 0), 1.0, 1.0, 1.0, Fidelity("bench", cells, 1e3))
+    t = make_tunnel(ev.domain, ev._flow_for(1e3))
+    t.set_geometry(mesh)
+    t.step(20)                       # compile / warm the kernels
+    t0 = time.perf_counter()
+    t.step(steps)
+    dt = time.perf_counter() - t0
+    return {"backend": t.backend, "device": device_name() if t.backend == "gpu" else None,
+            "mlups": round(ev.domain.n_cells * steps / dt / 1e6, 1), "measured_at": time.time()}
+
+
+def seconds_per_run(cells, mlups):
+    """Expected wall time of one cold CFD run on a grid of `cells` at `mlups` (measured above).
+    Step counts grow with the grid length: about 2,000 steps on the 300k-cell draft grid."""
+    steps = 2000.0 * (cells / 300_000) ** (1 / 3)
+    return steps * cells / (mlups * 1e6) + 2.0 + cells * 2e-6     # + voxelizing and post-processing
 
 
 @dataclass
@@ -332,6 +367,7 @@ class Evaluator:
                 # near-field scale in cells: mean chord for flat airframes, else the body's size across
                 "ln_cells": round(self.Ln_cells, 1),
                 "fidelity": self.fid.name, "re_cap": self.fid.re_cap,
+                "backend": getattr(self.tunnel, "backend", "cpu") if self.tunnel is not None else None,
                 "ref_area": self.ref_area, "ref_length": self.ref_length}
 
     def run(self, mesh: Mesh, re_sim: float, key=None, want_fields=True, progress=None, forcing=None, groups=None):
@@ -343,7 +379,10 @@ class Evaluator:
         ckey = None
         if self.cache is not None:
             from .cache import case_key
-            ckey = case_key(mesh, re_sim, self.domain, flow, self.fid, forcing, groups)
+            from .gpu import available
+            # float32 GPU and float64 CPU runs agree to ~0.1 %, but never mix them in one comparison
+            backend = self.tunnel.backend if self.tunnel is not None else ("gpu" if available() else "cpu")
+            ckey = case_key(mesh, re_sim, self.domain, flow, self.fid, forcing, groups, extra=backend)
             hit = self.cache.get(ckey, need_fields=want_fields)
             if hit is not None:
                 self.cache_hits += 1
@@ -357,7 +396,8 @@ class Evaluator:
 
     def _run(self, mesh, re_sim, flow, key, want_fields, progress, forcing, groups):
         if self.tunnel is None:
-            self.tunnel = Tunnel(self.domain, flow)
+            from .gpu import make_tunnel
+            self.tunnel = make_tunnel(self.domain, flow, self.log)
         elif self.flow is None or abs(self.flow.re_sim - re_sim) > 1e-9 * re_sim:
             self.tunnel.set_flow(flow)
         self.flow = flow
@@ -534,7 +574,7 @@ class Evaluator:
 def analyze(mesh: Mesh, conditions: Conditions, fidelity="draft", log=None, progress=None):
     """One cold run of a single mesh (wind axes, metres) at one condition. Returns the run,
     the forces at that speed and the setup, flattened (used by validation and tests)."""
-    fid = FIDELITY[fidelity] if isinstance(fidelity, str) else fidelity
+    fid = FIDELITY[RETIRED.get(fidelity, fidelity)] if isinstance(fidelity, str) else fidelity
     lo, hi = mesh.bbox()
     af = projected_area(mesh, 0)
     L = float(hi[0] - lo[0])

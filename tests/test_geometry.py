@@ -166,6 +166,29 @@ def test_design_zone_limits_changes_to_its_region():
     assert np.abs(mm.v[far] - m.v[far]).max() < 1e-12
 
 
+def test_rotated_zones():
+    from aerosculpt.geometry.zones import from_spec, rotation_matrix
+    I = np.eye(3)
+    spec = {"type": "protect", "shape": "box", "center": [0, 0, 0], "size": [2, 1, 0.5]}
+    flat = from_spec([spec], 1.0, I, np.zeros(3))[0]
+    yawed = from_spec([dict(spec, rotation=[0, 0, 90])], 1.0, I, np.zeros(3))[0]
+    p = np.array([[0.9, 0, 0], [0, 0.9, 0]])
+    assert flat.distance(p) == pytest.approx([0.0, 0.4])
+    assert yawed.distance(p) == pytest.approx([0.4, 0.0])           # the long side now runs along y
+    assert np.ptp(yawed.corners(), axis=0) == pytest.approx([1.0, 2.0, 0.5])
+    assert np.ptp(yawed.surface_points(), axis=0) == pytest.approx([1.0, 2.0, 0.5])
+    # a zero turn is no turn; turns are rotations
+    assert from_spec([dict(spec, rotation=[0, 0, 0])], 1.0, I, np.zeros(3))[0].R is None
+    Rm = rotation_matrix([10, 20, 30])
+    assert Rm @ Rm.T == pytest.approx(I) and np.linalg.det(Rm) == pytest.approx(1.0)
+    # mirror symmetry (negative angles reuse positive ones) only survives turns that keep it
+    assert yawed.z_symmetric
+    assert not from_spec([dict(spec, rotation=[0, 20, 0])], 1.0, I, np.zeros(3))[0].z_symmetric
+    cyl = dict(spec, shape="cylinder", size=[2, 1, 1])
+    assert from_spec([dict(cyl, rotation=[30, 0, 0])], 1.0, I, np.zeros(3))[0].z_symmetric   # rolled about its own axis
+    assert not from_spec([dict(cyl, rotation=[0, 30, 0])], 1.0, I, np.zeros(3))[0].z_symmetric
+
+
 def test_symmetry_detection():
     from aerosculpt.optimize.runner import is_z_symmetric
     for name, expected in (("rocket", True), ("streamlined-pod", True), ("wing", False), ("fixed-wing", False)):

@@ -1,6 +1,6 @@
 """Design constraints tied to places on the model.
 
-Three zone types, each a box or a cylinder along the flow axis:
+Three zone types, each a box or a cylinder (along the flow axis unless rotated):
 
   protect  geometry inside never moves (screw holes, mounting faces, fins, interfaces).
            The deformation fades out smoothly around the zone so the surface never tears.
@@ -23,17 +23,50 @@ TYPES = ("protect", "keep", "design")
 SHAPES = ("box", "cylinder")
 
 
+def rotation_matrix(deg):
+    """Roll, pitch, yaw (degrees, about body x, y, z, applied in that order) -> 3x3 matrix whose
+    columns are the zone's own axes in the body frame (three.js Euler order "ZYX")."""
+    rx, ry, rz = np.radians(np.asarray(deg, float))
+    cx, sx, cy, sy, cz, sz = math.cos(rx), math.sin(rx), math.cos(ry), math.sin(ry), math.cos(rz), math.sin(rz)
+    Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]])
+    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
+    Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]])
+    return Rz @ Ry @ Rx
+
+
 @dataclass
 class Zone:
     type: str
     shape: str
     center: np.ndarray     # body frame, metres
-    half: np.ndarray       # half extents along body x, y, z (cylinder: half length, radius, radius)
+    half: np.ndarray       # half extents along the zone's own x, y, z (cylinder: half length, radius, radius)
     name: str = ""
+    R: np.ndarray | None = None   # the zone's axes in the body frame (columns); None = the body axes
+
+    def local(self, p):
+        """Body-frame points -> the zone's own axes, relative to its centre."""
+        d = np.atleast_2d(p) - self.center
+        return d if self.R is None else d @ self.R
+
+    def to_body(self, q):
+        q = np.atleast_2d(q)
+        return self.center + (q if self.R is None else q @ self.R.T)
+
+    @property
+    def z_symmetric(self):
+        """The zone's orientation is unchanged by mirroring top-to-bottom (z -> -z); its centre
+        must also lie on z = 0 for the zone as a whole to be."""
+        if self.R is None:
+            return True
+        # mirrored axes must be the same axes up to sign (box) or the same axis line (cylinder)
+        A = np.abs(self.R.T @ np.diag([1.0, 1.0, -1.0]) @ self.R)
+        if self.shape == "cylinder":
+            return bool(A[0, 0] > 1 - 1e-6)
+        return bool(np.all(np.abs(A - np.eye(3)) < 1e-6))
 
     def distance(self, p):
         """Distance from points (N, 3) to the zone (0 inside)."""
-        d = np.abs(p - self.center)
+        d = np.abs(self.local(p))
         if self.shape == "cylinder":
             r = np.sqrt(d[:, 1] ** 2 + d[:, 2] ** 2)
             dr = np.maximum(r - self.half[1], 0.0)
@@ -43,7 +76,7 @@ class Zone:
 
     def surface_points(self, n=7):
         """Points covering the zone boundary, used for the keep-inside test."""
-        c, h = self.center, self.half
+        c, h = np.zeros(3), self.half
         g = np.linspace(-1.0, 1.0, n)
         pts = []
         if self.shape == "cylinder":
@@ -66,19 +99,20 @@ class Zone:
                             p[o[0]] = c[o[0]] + a * h[o[0]]
                             p[o[1]] = c[o[1]] + b * h[o[1]]
                             pts.append(p)
-        return np.unique(np.round(np.array(pts, float), 12), axis=0)
+        return self.to_body(np.unique(np.round(np.array(pts, float), 12), axis=0))
 
     def corners(self):
-        c, h = self.center, self.half
-        return np.array([[c[0] + sx * h[0], c[1] + sy * h[1], c[2] + sz * h[2]]
-                         for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+        h = self.half
+        return self.to_body(np.array([[sx * h[0], sy * h[1], sz * h[2]]
+                                      for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]))
 
 
 def from_spec(items, scale, R0, center):
     """Zones as sent by the client (model coordinates in file units) -> body-frame Zones.
 
-    R0 only permutes and flips axes, so axis-aligned boxes stay axis-aligned. Cylinders
-    always run along the flow axis (body x)."""
+    R0 only permutes and flips axes, so the size maps onto body axes; an optional "rotation"
+    (roll, pitch, yaw in degrees about the body axes) then turns the zone about its centre.
+    An unrotated cylinder runs along the flow axis (body x)."""
     out = []
     A = np.abs(np.asarray(R0))
     for it in items or []:
@@ -89,7 +123,9 @@ def from_spec(items, scale, R0, center):
         if it.get("shape") == "cylinder":
             r = max(hb[1], hb[2])
             hb = np.array([hb[0], r, r])
-        out.append(Zone(it["type"], it.get("shape", "box"), cb, np.maximum(hb, 1e-6), it.get("name", "")))
+        rot = it.get("rotation")
+        Rz = rotation_matrix(rot) if rot is not None and any(abs(float(a)) > 1e-9 for a in rot) else None
+        out.append(Zone(it["type"], it.get("shape", "box"), cb, np.maximum(hb, 1e-6), it.get("name", ""), Rz))
     return out
 
 

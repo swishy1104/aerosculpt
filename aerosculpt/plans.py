@@ -11,9 +11,9 @@ TUNNELS = ["general", "rc", "supersonic"]
 
 # Compute credits charged per CFD run at each fidelity (roughly cells x steps). A run is one
 # angle of attack; every airspeed in the envelope comes from the same run.
-CREDITS_PER_RUN = {"coarse": 0.4, "draft": 1, "standard": 3, "high": 8, "ultra": 20}
+CREDITS_PER_RUN = {"coarse": 0.4, "draft": 1, "standard": 3, "high": 8}
 # the optimizer explores on the next coarser grid and confirms at the fidelity the user chose
-EXPLORE_FID = {"draft": "coarse", "standard": "draft", "high": "draft", "ultra": "standard"}
+EXPLORE_FID = {"draft": "coarse", "standard": "draft", "high": "draft"}
 CONFIRM_DESIGNS = 4          # baseline, its error probe and two candidates
 
 PLANS = {
@@ -46,16 +46,24 @@ PLANS = {
     },
     "team": {
         "key": "team", "name": "Team", "price_month": 199, "tagline": "For labs, teams and suppliers",
-        "monthly_credits": 6000, "max_iterations": 150, "fidelities": ["draft", "standard", "high", "ultra"],
+        "monthly_credits": 6000, "max_iterations": 150, "fidelities": ["draft", "standard", "high"],
         "objectives": ALL_OBJECTIVES, "max_aspects": len(ALL_ASPECTS), "aspects": ALL_ASPECTS, "max_top_k": 8,
         "max_angles": 15, "max_speeds": 20, "max_zones": 40, "max_propellers": 8, "max_iterations_panel": 500,
         "max_projects": None, "max_upload_mb": 400, "max_triangles": 5_000_000,
         "export": True, "verify": True, "reports": True, "api": True,
         "priority": 20, "concurrent_jobs": 4,
-        "features": ["Everything in Pro", "Ultra fidelity (6M-cell tunnel)", "Sweep 15 angles × 20 airspeeds",
+        "features": ["Everything in Pro", "Sweep 15 angles × 20 airspeeds",
                      "150-design optimization of up to 8 parameters", "6,000 compute credits a month", "REST API keys",
                      "Highest queue priority, 4 jobs at once"],
     },
+}
+
+
+# temporary accounts of the public guest demo (config.guest_demo); never listed or sold
+PLANS["guest"] = {
+    **PLANS["lite"], "key": "guest", "name": "Guest demo", "tagline": "Temporary demo account",
+    "monthly_credits": 30, "fidelities": ["draft", "standard"], "max_projects": 4, "max_upload_mb": 15,
+    "priority": -10, "hidden": True, "features": [],
 }
 
 

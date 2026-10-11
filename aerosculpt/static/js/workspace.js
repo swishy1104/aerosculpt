@@ -1,6 +1,6 @@
 import { api, appTop, busy, confirmDialog, esc, fmtDuration, fmtForce, fmtInt, fmtPct, fmtPower, getMe, h, handleError,
   icon, requireAuth, sig, timeAgo, toast, upgradePrompt, $, $$ } from "/static/js/core.js";
-import { ModelFrame, Viewer, applyMat3, parseModel, parseSTL, rotate, transposeMat3, windRotation, zoneMatrix } from "/static/js/viewer.js";
+import { ModelFrame, Viewer, applyMat3, parseModel, parseSTL, rotate, transposeMat3, windRotation, zoneFromPose, zoneMatrix } from "/static/js/viewer.js";
 import { MAPS, b64bytes, cssGradient, dequantize } from "/static/js/colormap.js";
 import { lineChart } from "/static/js/charts.js";
 import { Propellers, rcCharts, rcResultsHTML } from "/static/js/tunnel-rc.js";
@@ -13,7 +13,12 @@ let project, catalog;
 try {
   [project, catalog] = await Promise.all([api(`/api/projects/${pid}`), api("/api/plans")]);
 } catch (e) {
-  handleError(e);
+  // a deleted project or someone else's link: say so plainly instead of leaving a half-built workspace
+  const gone = e && e.status === 404;
+  document.body.innerHTML = `<main class="center-page"><div class="card" style="max-width:440px;text-align:center;padding:28px">
+    <h2 style="margin:0 0 8px">${gone ? "Project not found" : "Could not open this project"}</h2>
+    <p class="muted" style="margin:0 0 18px">${gone ? "It may have been deleted, or it belongs to another account." : esc(e && e.message ? e.message : "Please try again.")}</p>
+    <a class="btn primary" href="/app">Back to projects</a></div></main>`;
   throw e;
 }
 document.title = `${project.name} — AeroSculpt`;
@@ -42,7 +47,9 @@ const unvalidated = catalog.objectives_unvalidated || [];
 if (!(opt.objective in catalog.objectives) || unvalidated.includes(opt.objective)) opt.objective = "drag";
 let fidelity = me.limits.fidelities.includes(S.fidelity) ? S.fidelity : me.limits.fidelities[0];
 const AXES = ["+x", "-x", "+y", "-y", "+z", "-z"];
-const PER_RUN_S = { draft: 35, standard: 140, high: 400, ultra: 1200 };
+// measured on the job worker at start-up (GPU or CPU); fallback: a laptop CPU
+const COMPUTE = catalog.compute || { backend: "cpu", seconds_per_run: { coarse: 8, draft: 20, standard: 95, high: 300 } };
+const PER_RUN_S = COMPUTE.seconds_per_run;
 const ZONE_TYPES = {
   protect: { label: "Protect", color: "--protect", help: "Geometry inside never moves", name: "Protected region" },
   keep: { label: "Keep inside", color: "--keep", help: "Volume stays enclosed (payload, motor)", name: "Payload bay" },
@@ -69,6 +76,8 @@ const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValu
 
 // ---- viewer -----------------------------------------------------------------------------------------
 const viewer = new Viewer($("#vp"));
+// overlays sit just under the viewport toolbar, which wraps onto more rows on narrow screens
+new ResizeObserver(() => $("#vp").style.setProperty("--tb-h", $(".vp-toolbar").offsetHeight + "px")).observe($(".vp-toolbar"));
 let dparams = null;
 addEventListener("themechange", () => { viewer.applyTheme(); renderZones3D(); colorbar(); renderResults(); renderHistoryTab(); });
 const ranges = { cp: [-1, 1], speed: [0, 1.4] };
@@ -245,16 +254,20 @@ function renderZones() {
         <button class="icon-btn" data-pick title="Place on the model">${icon("crosshair", "i sm")}</button>
         <button class="icon-btn" data-del title="Remove">${icon("trash", "i sm")}</button></div>
       <div class="row" style="margin-top:6px;gap:6px"><div class="seg"><button data-shape="box" class="${z.shape === "box" ? "on" : ""}">Box</button>
-        <button data-shape="cylinder" class="${z.shape === "cylinder" ? "on" : ""}" title="Cylinder along the flow axis">Cylinder</button></div>
-        <span class="small muted">${unit}</span></div>
+        <button data-shape="cylinder" class="${z.shape === "cylinder" ? "on" : ""}" title="Cylinder: along the flow axis until you turn it">Cylinder</button></div>
+        <span class="grow"></span><button class="btn sm ghost" data-edit type="button" title="Move, turn and resize it in the 3D view">${icon("move", "i sm")}Edit in 3D</button></div>
       ${z.type === "material" ? `<label class="field" style="margin:8px 0 0"><span>Material</span><select data-mat>${Object.entries(catalog.materials).map(([k, m]) =>
         `<option value="${k}" ${z.material === k ? "selected" : ""}>${esc(m.name)} · ${fmtInt(m.t_max_c)} °C</option>`).join("")}</select></label>` : ""}
       <div class="zgrid"><span></span><span class="ax">X</span><span class="ax">Y</span><span class="ax">Z</span>
-        <span>Centre</span>${z.center.map((v, i) => `<input type="number" step="any" data-c="${i}" value="${v}">`).join("")}
-        <span>Size</span>${z.size.map((v, i) => `<input type="number" step="any" min="0" data-s="${i}" value="${v}">`).join("")}</div>`;
+        <span>Centre</span>${z.center.map((v, i) => `<input type="number" step="any" data-c="${i}" value="${v}" aria-label="Centre ${"XYZ"[i]} (${unit})">`).join("")}
+        <span>Size</span>${z.size.map((v, i) => `<input type="number" step="any" min="0" data-s="${i}" value="${v}" aria-label="Size ${"XYZ"[i]} (${unit})">`).join("")}
+        <span class="ax-l" title="Roll about the flow axis, pitch, yaw">Turn °</span>${(z.rotation || [0, 0, 0]).map((v, i) =>
+          `<input type="number" step="5" data-r="${i}" value="${v}" title="${["Roll (about the flow axis)", "Pitch", "Yaw"][i]}" aria-label="${["Roll", "Pitch", "Yaw"][i]} in degrees">`).join("")}</div>
+      <div class="zfoot small muted">${unit} · turns are roll, pitch, yaw about the airframe axes</div>`;
     card.addEventListener("click", (e) => {
-      if (selectedZone !== z.id && !e.target.closest("input,button")) { selectedZone = z.id; renderZones(); renderZones3D(); }
+      if (selectedZone !== z.id && !e.target.closest("input,button")) selectZone(z.id);
     });
+    card.querySelector("[data-edit]").addEventListener("click", () => selectZone(z.id, zoneTool.mode || "translate"));
     card.querySelector(".zh input").addEventListener("change", (e) => { z.name = e.target.value; saveSettings(); summaries(); });
     card.querySelector("[data-del]").addEventListener("click", () => {
       S.zones = S.zones.filter((q) => q !== z);
@@ -266,11 +279,18 @@ function renderZones() {
     card.querySelectorAll("[data-shape]").forEach((b) => b.addEventListener("click", () => {
       z.shape = b.dataset.shape; renderZones(); renderZones3D(); saveSettings();
     }));
-    card.querySelectorAll("input[data-c],input[data-s]").forEach((inp) => inp.addEventListener("change", () => {
+    card.querySelectorAll("input[data-c],input[data-s],input[data-r]").forEach((inp) => inp.addEventListener("change", () => {
       const v = parseFloat(inp.value);
       if (!Number.isFinite(v) || (inp.dataset.s !== undefined && v <= 0)) { inp.classList.add("invalid"); return; }
       inp.classList.remove("invalid");
-      if (inp.dataset.c !== undefined) z.center[+inp.dataset.c] = v; else z.size[+inp.dataset.s] = v;
+      if (inp.dataset.c !== undefined) z.center[+inp.dataset.c] = v;
+      else if (inp.dataset.s !== undefined) z.size[+inp.dataset.s] = v;
+      else {
+        z.rotation = (z.rotation || [0, 0, 0]).slice();
+        z.rotation[+inp.dataset.r] = ((v + 180) % 360 + 360) % 360 - 180;
+        inp.value = z.rotation[+inp.dataset.r];
+        if (z.rotation.every((a) => a === 0)) delete z.rotation;
+      }
       selectedZone = z.id;
       renderZones3D(); saveSettings();
     }));
@@ -287,9 +307,85 @@ function renderZones3D() {
     const c = frame.fileToBody(z.center);
     let s = frame.sizeToBody(z.size);
     if (z.shape === "cylinder") { const r = Math.max(s[1], s[2]); s = [s[0], r, r]; }
-    return { shape: z.shape, color: cssVar(ZONE_TYPES[z.type].color), selected: z.id === selectedZone, matrix: zoneMatrix(c, s, R) };
+    return { id: z.id, shape: z.shape, color: cssVar(ZONE_TYPES[z.type].color), selected: z.id === selectedZone, matrix: zoneMatrix(c, s, R, z.rotation) };
   }));
+  syncZoneTool();
 }
+
+// ---- protected regions in 3D: select, move, turn, resize ---------------------------------------------------
+const zoneTool = { mode: null, snap: false };     // mode: null (closed) | "translate" | "rotate" | "scale"
+const TOOL_LABEL = { translate: "Move", rotate: "Turn", scale: "Resize" };
+function zoneEditable() {
+  return !!frame && vis.zones && !(showingResults && viewer.root.scale.z < 0);
+}
+function selectZone(id, mode = zoneTool.mode) {
+  selectedZone = id;
+  zoneTool.mode = id ? mode || "translate" : null;
+  renderZones();
+  renderZones3D();
+  const card = $("#zones .zone.sel");
+  if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+function syncZoneTool() {
+  const z = S.zones.find((q) => q.id === selectedZone);
+  const bar = $("#zone-tools");
+  const on = !!(z && zoneTool.mode && zoneEditable() && (!ZONE_TYPES[z.type].only || ZONE_TYPES[z.type].only === tunnel));
+  bar.classList.toggle("hidden", !on);
+  if (!on) { viewer.detachZoneTool(); return; }
+  bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === zoneTool.mode));
+  $("#zt-snap").classList.toggle("on", zoneTool.snap);
+  $("#zt-name").textContent = z.name;
+  const cur = viewer._zoneToolArgs;
+  if (viewer.zoneTool && cur && cur[0] === z.id && cur[1] === zoneTool.mode && cur[2].snap === zoneTool.snap) return;
+  viewer.attachZoneTool(z.id, zoneTool.mode, { snap: zoneTool.snap, onChange: (pose) => zoneDragged(z, pose), onEnd: () => zoneDragEnd(z) });
+}
+function zoneDragged(z, pose) {
+  const R = displayRotation();
+  const b = zoneFromPose(pose, R);
+  if (z.shape === "cylinder") {     // one radius: follow whichever cross-section handle moved
+    const prev = frame.sizeToBody(z.size);
+    const r = Math.abs(b.size[1] - Math.max(prev[1], prev[2])) >= Math.abs(b.size[2] - Math.max(prev[1], prev[2])) ? b.size[1] : b.size[2];
+    b.size[1] = b.size[2] = r;
+    viewer.zoneTool.target.scale.set(b.size[0], r, r);
+  }
+  z.center = frame.bodyToFile(b.center).map(round);
+  const fs = [0, 0, 0];      // body-axes size -> file axes and units
+  for (let k = 0; k < 3; k++) for (let j = 0; j < 3; j++) fs[j] += Math.abs(frame.R0[k][j]) * b.size[k];
+  z.size = fs.map((v) => Math.max(round(v / frame.s), 1e-3));
+  if (b.rotation.some((a) => Math.abs(a) > 0.05)) z.rotation = b.rotation; else delete z.rotation;
+  const card = $("#zones .zone.sel");      // live numbers without rebuilding the card
+  if (card) {
+    card.querySelectorAll("input[data-c]").forEach((inp) => { inp.value = z.center[+inp.dataset.c]; });
+    card.querySelectorAll("input[data-s]").forEach((inp) => { inp.value = z.size[+inp.dataset.s]; });
+    card.querySelectorAll("input[data-r]").forEach((inp) => { inp.value = (z.rotation || [0, 0, 0])[+inp.dataset.r]; });
+  }
+}
+function zoneDragEnd() {
+  saveSettings();
+  renderZones3D();
+}
+$("#zone-tools").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const z = S.zones.find((q) => q.id === selectedZone);
+  if (b.dataset.tool) zoneTool.mode = b.dataset.tool;
+  else if (b.id === "zt-snap") zoneTool.snap = !zoneTool.snap;
+  else if (b.id === "zt-reset" && z) {
+    delete z.rotation;
+    renderZones();
+    saveSettings();
+  } else if (b.id === "zt-done") zoneTool.mode = null;
+  renderZones3D();
+});
+addEventListener("keydown", (e) => {
+  if (!zoneTool.mode || e.target.closest("input,textarea,select") || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  const mode = { w: "translate", g: "translate", e: "rotate", r: "scale", s: "scale" }[k];
+  if (mode) { zoneTool.mode = mode; renderZones3D(); e.preventDefault(); }
+  else if (k === "escape" && !picking) { zoneTool.mode = null; renderZones3D(); }
+  else if (k === "shift") { zoneTool.snap = true; renderZones3D(); }
+});
+addEventListener("keyup", (e) => { if (e.key === "Shift" && zoneTool.mode && zoneTool.snap) { zoneTool.snap = false; renderZones3D(); } });
 
 function startPick(id, kind = "zone") {
   picking = { id, kind };
@@ -308,7 +404,15 @@ addEventListener("keydown", (e) => { if (e.key === "Escape" && picking) stopPick
 let downAt = null;
 viewer.renderer.domElement.addEventListener("pointerdown", (e) => { downAt = [e.clientX, e.clientY]; });
 viewer.renderer.domElement.addEventListener("pointerup", (e) => {
-  if (!picking || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;  // a drag orbits
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || viewer.dragging || viewer.overGizmo) return;  // a drag orbits
+  if (!picking) {
+    const id = zoneEditable() ? viewer.pickZone(e.clientX, e.clientY) : null;
+    if (id && id !== selectedZone) {
+      $(`[data-sec="protect"]`).classList.remove("closed");
+      selectZone(id, zoneTool.mode || "translate");
+    }
+    return;
+  }
   const p = viewer.pick(e.clientX, e.clientY);
   if (!p) return toast("Click on the model surface.");
   const R = displayRotation();
@@ -326,7 +430,9 @@ viewer.renderer.domElement.addEventListener("pointerup", (e) => {
     renderZones();
     renderZones3D();
     saveSettings();
-    toast(`${z.name} placed. Adjust its size on the left.`, "good");
+    zoneTool.mode = zoneTool.mode || "translate";
+    syncZoneTool();
+    toast(`${z.name} placed. Drag the handles to move, turn (E) or resize (R) it.`, "good");
   }
   stopPick();
 });
@@ -420,7 +526,7 @@ function flowInfo() {
 }
 
 // ---- 4/5. simulate & optimize ---------------------------------------------------------------------------
-const FID_LABEL = { draft: "Draft", standard: "Standard", high: "High", ultra: "Ultra" };
+const FID_LABEL = { draft: "Draft", standard: "Standard", high: "High" };
 function renderFidelity() {
   if (tunnel === "supersonic") {
     $("#fid-block").classList.add("hidden");
@@ -449,7 +555,8 @@ function renderFidelity() {
     seg.append(b);
   }
   const fd = catalog.fidelities[fidelity];
-  $("#fid-note").textContent = `${fmtInt(fd.cells)}-cell tunnel · ${catalog.credits_per_run[fidelity]} credit${catalog.credits_per_run[fidelity] > 1 ? "s" : ""} per CFD run`;
+  const where = COMPUTE.backend === "gpu" ? `GPU${COMPUTE.device ? " (" + COMPUTE.device.replace(/^NVIDIA (GeForce )?/, "").replace(/ with Max-Q Design/, "") + ")" : ""}` : "CPU";
+  $("#fid-note").innerHTML = `${fmtInt(fd.cells)}-cell tunnel · ≈ ${fmtDuration(PER_RUN_S[fidelity])} per run on the ${esc(where)} · ${catalog.credits_per_run[fidelity]} credit${catalog.credits_per_run[fidelity] > 1 ? "s" : ""} per run`;
 }
 
 function renderObjective() {
@@ -710,7 +817,93 @@ function renderStatus(j) {
     j.spec.tunnel === "supersonic" ? "surface methods" : `${j.cfd_runs} CFD run${j.cfd_runs === 1 ? "" : "s"}`} · ${j.credits_used} credit${j.credits_used === 1 ? "" : "s"}`;
   stage.textContent = txt;
   $("#log").textContent = j.log || "";
+  renderLive(j);
 }
+
+// ---- live run card: what the tunnel is doing right now ----------------------------------------------------
+const PHASES = {
+  analyze: [["setup", "Tunnel setup"], ["solve", "Flow solve"], ["post", "Results"]],
+  optimize: [["setup", "Setup"], ["baseline", "Baseline"], ["probe", "Solver error"], ["screen", "Screening"], ["search", "Search"], ["confirm", "Confirm"]],
+};
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+function phaseOf(j) {
+  const s = j.stage || "";
+  if (j.status === "queued" || /^(Starting|Building)/.test(s)) return "setup";
+  if (j.kind !== "optimize") return /^Done|Writing|fields$/.test(s) ? "post" : (j.live && j.live.run) || /surface methods/.test(s) ? "solve" : "setup";
+  if (/^(Confirming|Best design)/.test(s)) return "confirm";
+  if (/^Design \d+ of/.test(s)) return "search";
+  if (/^Screening/.test(s)) return "screen";
+  if (/error/i.test(s)) return "probe";
+  if (/^Baseline/.test(s)) return "baseline";
+  return "setup";
+}
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+function sparkline(vals, w = 236, hgt = 44) {
+  if (!vals || vals.length < 2) return `<div class="rc-spark empty">Waiting for the first forces…</div>`;
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || Math.abs(hi) * 0.05 || 1;
+  const pts = vals.map((v, i) => `${((i / (vals.length - 1)) * (w - 4) + 2).toFixed(1)},${(hgt - 4 - ((v - lo) / span) * (hgt - 10)).toFixed(1)}`).join(" ");
+  const [lx, ly] = pts.split(" ").pop().split(",");
+  return `<svg class="rc-spark" viewBox="0 0 ${w} ${hgt}" width="100%" height="${hgt}" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
+    <circle cx="${lx}" cy="${ly}" r="3.2" fill="var(--accent)"><animate attributeName="r" values="3;5;3" dur="1.2s" repeatCount="indefinite"/></circle></svg>`;
+}
+
+function designDots(history, w = 236, hgt = 44) {
+  const js = (history || []).filter((e) => Number.isFinite(e.objective)).map((e) => e.objective);
+  if (js.length < 2) return "";
+  const lo = Math.min(...js, 0.97), hi = Math.max(...js, 1.03);
+  const y = (v) => (2 + ((hi - v) / (hi - lo)) * (hgt - 6)).toFixed(1);
+  let best = Infinity;
+  const dots = js.map((v, i) => {
+    const isBest = v < best;
+    if (isBest) best = v;
+    return `<circle cx="${((i / Math.max(js.length - 1, 1)) * (w - 8) + 4).toFixed(1)}" cy="${y(v)}" r="${isBest ? 3.2 : 2.2}" fill="${isBest ? "var(--good)" : "var(--muted)"}" opacity="${isBest ? 1 : 0.6}"/>`;
+  }).join("");
+  const gain = (1 - best) * 100;
+  return `<div class="rc-row"><span class="k">Designs tried</span><span class="v">${js.length} · best ${gain > 0.05 ? `<b style="color:var(--good-text)">−${gain.toFixed(1)} %</b>` : "no gain yet"}</span></div>
+    <svg class="rc-spark" viewBox="0 0 ${w} ${hgt}" width="100%" height="${hgt}" aria-hidden="true">
+      <line x1="0" x2="${w}" y1="${y(1)}" y2="${y(1)}" stroke="var(--border-strong)" stroke-dasharray="3 3"/>${dots}</svg>`;
+}
+
+function renderLive(j) {
+  const card = $("#run-card");
+  const active = !!j && (j.status === "queued" || j.status === "running");
+  card.classList.toggle("hidden", !active);
+  viewer.setWind(active && j.status === "running" && !reducedMotion.matches, { fast: tunnel === "supersonic" });
+  if (!active) return;
+  const phases = PHASES[j.kind === "optimize" ? "optimize" : "analyze"];
+  const ci = Math.max(0, phases.findIndex(([k]) => k === phaseOf(j)));
+  const run = j.live && j.live.run;
+  const pct = Math.round((j.progress || 0) * 100);
+  const el = j.started_at ? Math.max(0, Date.now() / 1000 - j.started_at) : 0;
+  const left = j.status === "running" && j.progress > 0.04 ? (el * (1 - j.progress)) / j.progress : null;
+  const where = tunnel === "supersonic" ? "surface methods" : COMPUTE.backend === "gpu" ? "GPU" : "CPU";
+  const tr = run && run.trace ? run.trace : [];
+  const settle = tr.length >= 2 ? Math.abs(tr[tr.length - 1] - tr[tr.length - 2]) / Math.max(Math.abs(tr[tr.length - 1]), 1e-6) * 100 : null;
+  const steps = phases.map(([, label], i) => `<span class="rc-step ${i < ci ? "done" : i === ci ? "now" : ""}">${i < ci ? icon("check") : `<i></i>`}${label}</span>`).join("");
+  let runs = "";
+  if (run && run.n > 1) {
+    runs = run.n <= 48
+      ? `<div class="rc-dots" title="CFD run ${run.i} of ${run.n}">${Array.from({ length: run.n }, (_, k) =>
+        `<span class="${k + 1 < run.i ? "done" : k + 1 === run.i ? "now" : ""}"${k + 1 === run.i ? ` style="--f:${run.f}"` : ""}></span>`).join("")}</div>`
+      : `<div class="meter rc-meter"><div style="width:${Math.round(((run.i - 1 + run.f) / run.n) * 100)}%"></div></div>`;
+  }
+  const cond = run ? `${esc(run.label)} · α ${run.aoa}°${run.speed != null ? ` · ${run.speed} m/s` : ""}` : esc(j.stage || "Preparing");
+  card.innerHTML = `
+    <div class="rc-head"><span class="rc-pulse"></span><b>${j.status === "queued" ? "Queued" : j.kind === "optimize" ? "Optimizing" : "Simulating"}</b>
+      <span class="muted small">${esc(TUNNELS[tunnel].label)} tunnel · ${esc(where)}</span><span class="grow"></span><span class="rc-pct">${pct}%</span></div>
+    <div class="rc-steps">${steps}</div>
+    ${j.status === "queued" ? `<div class="rc-now">Waiting in queue${j.queue_position ? ` · position ${j.queue_position}` : ""}…</div>` : `
+    <div class="rc-now">${cond}${run ? ` <span class="muted">· run ${run.i} of ${run.n}</span>` : ""}</div>
+    ${runs}
+    ${run ? `<div class="rc-row" title="The run ends when the averaged drag changes by less than 1 % between checks"><span class="k">Drag settling</span><span class="v">${
+      settle == null ? "—" : `${settle < 1 ? icon("check") : ""}Δ ${settle < 10 ? settle.toFixed(1) : Math.round(settle)} %`}</span></div>${sparkline(tr)}` : ""}
+    ${j.kind === "optimize" && j.live && j.live.history ? designDots(j.live.history) : ""}
+    <div class="rc-foot"><span>${icon("clock")} ${clock(el)} elapsed</span>${left != null ? `<span>about ${fmtDuration(Math.max(1, left))} left</span>` : ""}</div>`}`;
+}
+// tick the elapsed clock between polls
+setInterval(() => { if (watchJob && watchJob.status === "running" && !$("#run-card").classList.contains("hidden")) renderLive(watchJob); }, 1000);
 $("#st-cancel").addEventListener("click", async () => {
   if (!watchJob) return;
   if (!(await confirmDialog("Cancel this run?", "Credits for CFD runs already finished are not refunded.", "Cancel run", true))) return;

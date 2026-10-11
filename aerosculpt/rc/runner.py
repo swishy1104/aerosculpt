@@ -14,7 +14,7 @@ import numpy as np
 
 from ..cfd.analysis import at_speed
 from ..geometry.zones import Zone
-from ..optimize.runner import Runner, wind_rotation
+from ..optimize.runner import Runner, live_run, wind_rotation
 from .actuator import disk_forcing
 from .propeller import INCH, Propeller, bemt
 
@@ -134,9 +134,12 @@ class RCRunner(Runner):
                 frac0 = self.run_index / self.total_runs
                 frac1 = (self.run_index + 1) / self.total_runs
 
-                def prog(f, cd, frac0=frac0, frac1=frac1, a=a, v=v):
+                trace = []
+
+                def prog(f, cd, frac0=frac0, frac1=frac1, a=a, v=v, trace=trace):
                     self._progress(0.02 + 0.96 * (frac0 + (frac1 - frac0) * min(f, 1.0)),
-                                   f"{label} · {a:g}° · {v:g} m/s · CFD run {self.run_index + 1} of {self.total_runs}")
+                                   f"{label} · {a:g}° · {v:g} m/s · CFD run {self.run_index + 1} of {self.total_runs}",
+                                   live_run(self, label, a, v, f, cd, trace))
                 forcing, perf = self.prop_loads(ev, a, v)
                 try:
                     runs[(a, v)] = ev.run(wind, re, key=(a, v), want_fields=(v == v_fields) and self.fields_wanted, progress=prog,

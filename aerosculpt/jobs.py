@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import shutil
@@ -191,6 +192,27 @@ def run_job(job):
         add_usage(con, job["user_id"], credits=credits, cfd_runs=runner.cfd_runs, jobs=1)
 
 
+def purge_guests(now=None):
+    """Delete guest-demo accounts older than GUEST_HOURS with everything they made (rows cascade;
+    files are removed here). A guest whose job is still running is kept until it ends."""
+    cutoff = (now or time.time()) - settings.guest_hours * 3600
+    with db() as con:
+        rows = con.execute("""SELECT id FROM users WHERE billing_source='guest' AND created_at < ? AND id NOT IN
+                              (SELECT user_id FROM jobs WHERE status IN ('queued', 'running'))""", (cutoff,)).fetchall()
+        gone = []
+        for r in rows:
+            pids = [p["id"] for p in con.execute("SELECT id FROM projects WHERE user_id=?", (r["id"],))]
+            jids = [j["id"] for j in con.execute("SELECT id FROM jobs WHERE user_id=?", (r["id"],))]
+            con.execute("DELETE FROM users WHERE id=?", (r["id"],))
+            gone.append((pids, jids))
+    for pids, jids in gone:
+        for pid in pids:
+            shutil.rmtree(project_dir(pid), ignore_errors=True)
+        for jid in jids:
+            shutil.rmtree(job_dir(jid), ignore_errors=True)
+    return len(gone)
+
+
 def warm_up():
     """Compile the numba kernels once so the first customer job does not pay for it."""
     from .cfd.analysis import Conditions, Fidelity, analyze
@@ -200,6 +222,18 @@ def warm_up():
     analyze(icosphere(0.5, 2), Conditions(speed=1.0), Fidelity("warmup", 20_000, 1e3, extra_chunks=0, avg_chunks=1))
     m = icosphere(0.5, 1)
     _inside_counts(np.ascontiguousarray(m.triangles()), np.zeros(m.n_faces, dtype=np.int64), 1, np.zeros((1, 3)))
+    record_throughput()
+
+
+def record_throughput():
+    """Benchmark the tunnel once and store it for the run-time estimates (web.compute_info)."""
+    from .cfd.analysis import throughput
+    info = throughput()
+    tmp = settings.data_dir / "compute.json.tmp"
+    tmp.write_text(json.dumps(info))
+    tmp.replace(settings.data_dir / "compute.json")
+    logging.getLogger(__name__).info("tunnel: %s%s, %.0f million cell updates/s", info["backend"],
+                                     f" ({info['device']})" if info.get("device") else "", info["mlups"])
 
 
 def worker_loop(stop=None, poll_s=1.0):
@@ -212,6 +246,10 @@ def worker_loop(stop=None, poll_s=1.0):
     while stop is None or not stop.is_set():
         if time.time() - last_recover > 60:
             recover_stale()
+            try:
+                purge_guests()
+            except Exception:  # noqa: BLE001 - housekeeping never stops the queue
+                traceback.print_exc()
             last_recover = time.time()
         job = claim_next(worker_id)
         if job is None:

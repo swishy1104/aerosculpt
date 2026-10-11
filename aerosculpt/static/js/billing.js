@@ -67,7 +67,7 @@ function usage() {
     <div class="meter ${frac > 0.9 ? "bad" : frac > 0.7 ? "warn" : ""}"><div style="width:${(1 - frac) * 100}%"></div></div>
     <div class="kv" style="margin-top:14px"><span class="k">CFD runs</span><span class="v">${fmtInt(me.usage.cfd_runs)}</span>
       <span class="k">Jobs</span><span class="v">${fmtInt(me.usage.jobs)}</span>
-      <span class="k">Credits per run</span><span class="v">draft ${catalog.credits_per_run.draft} · standard ${catalog.credits_per_run.standard} · high ${catalog.credits_per_run.high} · ultra ${catalog.credits_per_run.ultra}</span></div>`;
+      <span class="k">Credits per run</span><span class="v">draft ${catalog.credits_per_run.draft} · standard ${catalog.credits_per_run.standard} · high ${catalog.credits_per_run.high}</span></div>`;
 }
 
 function plans() {

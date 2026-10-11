@@ -59,6 +59,24 @@ form.addEventListener("submit", async (ev) => {
   }
 });
 
+if (page === "login") {
+  api("/api/plans").then((cat) => {
+    if (cat.guest_demo) $("#guest-box").classList.remove("hidden");
+    if (!cat.signup_open) $("#signup-link").classList.add("hidden");
+  }).catch(() => {});
+  $("#guest-btn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    busy(btn, true);
+    try {
+      await api("/api/auth/guest", { method: "POST" });
+      location.href = "/app?welcome=1";
+    } catch (err) {
+      showError(err);
+      busy(btn, false);
+    }
+  });
+}
+
 if (page === "reset" && !qs("token")) {
   errBox.textContent = "This page needs the link from your reset email.";
   errBox.classList.remove("hidden");

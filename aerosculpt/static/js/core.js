@@ -91,6 +91,9 @@ const P = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
   check: '<path d="m5 12 5 5L20 7"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  move: '<path d="M12 3v18M3 12h18M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>',
+  scale: '<path d="M4 14v6h6M20 10V4h-6M4 20 20 4"/>',
   lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
   unlock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
   alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4"/><path d="M12 17h.01"/>',
@@ -365,11 +368,11 @@ export function appTop(me, crumbs = []) {
   const pop = h("div", { class: "menu-pop hidden" });
   pop.innerHTML = `<div class="who">${esc(me.name || "")}<br>${esc(me.email)}</div>
     <a href="/app">${icon("grid")}Projects</a>
-    <a href="/app/billing">${icon("card")}Plan &amp; billing</a>
-    <a href="/app/account">${icon("user")}Account</a>
+    ${me.guest ? "" : `<a href="/app/billing">${icon("card")}Plan &amp; billing</a>
+    <a href="/app/account">${icon("user")}Account</a>`}
     <a href="/docs">${icon("book")}Documentation</a>
     ${me.is_admin ? `<a href="/admin">${icon("shield")}Admin</a>` : ""}
-    ${me.preview ? "" : `<button type="button" data-logout>${icon("logout")}Sign out</button>`}`;
+    ${me.preview ? "" : `<button type="button" data-logout>${icon("logout")}${me.guest ? "Leave the demo" : "Sign out"}</button>`}`;
   av.addEventListener("click", (e) => { e.stopPropagation(); pop.classList.toggle("hidden"); });
   document.addEventListener("click", () => pop.classList.add("hidden"));
   pop.querySelector("[data-logout]")?.addEventListener("click", async () => {
@@ -392,6 +395,12 @@ export function appTop(me, crumbs = []) {
 }
 
 function banners(me, after) {
+  if (me.guest) {
+    const hours = Math.max(1, Math.round((me.guest_expires_at - Date.now() / 1000) / 3600));
+    const b = h("div", { class: "trial-banner", html: `${icon("sparkles")} Guest demo — open a sample or template and run it. This temporary account and its projects are deleted in about ${hours} hour${hours === 1 ? "" : "s"}.` });
+    after.after(b);
+    return;
+  }
   if (me.preview) {
     // local preview: sign-in is off and every feature is unlocked; one quiet banner says so
     const b = h("div", { class: "trial-banner", html: `${icon("eye")} Local preview — sign-in is turned off and every feature is unlocked. Set <code>OPEN_ACCESS=0</code> to bring accounts back.` });

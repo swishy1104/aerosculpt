@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import re
+import secrets
 import logging
 import math
 import shutil
@@ -28,7 +29,7 @@ from .db import add_usage, audit, db, init_db, transaction, usage_for
 from .jobs import enqueue, job_dir, project_dir
 from .geometry import templates as T
 from .plans import ALL_ASPECTS, ALL_OBJECTIVES, CREDITS_PER_RUN, EXPLORE_FID, PLANS, check_spec, estimate_credits, plan_for
-from .security import (DUMMY_HASH, auth_limiter, check_password, hash_password, new_api_key, new_token,
+from .security import (DUMMY_HASH, RateLimiter, auth_limiter, check_password, hash_password, new_api_key, new_token,
                        normalize_email, password_problem, token_hash, upload_limiter, valid_email)
 
 log = logging.getLogger("aerosculpt.web")
@@ -93,6 +94,8 @@ def current_user(request: Request, con, required=True):
 
 
 PREVIEW_EMAIL = "preview@aerosculpt.local"
+GUEST_DOMAIN = "guest.aerosculpt.local"
+guest_limiter = RateLimiter(limit=4, window_s=3600)
 
 
 def _preview_user(con):
@@ -107,15 +110,16 @@ def _preview_user(con):
     return row
 
 
-def start_session(con, request, user_id, response: Response):
+def start_session(con, request, user_id, response: Response, max_age_s=None):
     tok = new_token()
     now = time.time()
+    age = int(max_age_s or settings.session_days * 86400)
     con.execute("INSERT INTO sessions (token_hash, user_id, created_at, expires_at, ip, user_agent) VALUES (?,?,?,?,?,?)",
-                (token_hash(tok), user_id, now, now + settings.session_days * 86400, _client_ip(request),
+                (token_hash(tok), user_id, now, now + age, _client_ip(request),
                  request.headers.get("user-agent", "")[:300]))
     con.execute("UPDATE users SET last_login_at=? WHERE id=?", (now, user_id))
     con.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
-    response.set_cookie(SESSION_COOKIE, tok, max_age=settings.session_days * 86400, httponly=True,
+    response.set_cookie(SESSION_COOKIE, tok, max_age=age, httponly=True,
                         secure=settings.secure_cookies, samesite="lax", path="/")
 
 
@@ -143,6 +147,8 @@ def user_public(con, user):
         "current_period_end": user["current_period_end"], "cancel_at_period_end": bool(user["cancel_at_period_end"]),
         "billing_source": user["billing_source"], "billing_mode": settings.billing_mode,
         "preview": user["email"] == PREVIEW_EMAIL and settings.open_access,
+        "guest": user["billing_source"] == "guest",
+        "guest_expires_at": user["created_at"] + settings.guest_hours * 3600 if user["billing_source"] == "guest" else None,
         "has_api_key": bool(user["api_key_hash"]), "api_key_prefix": user["api_key_prefix"],
         "limits": {k: plan[k] for k in ("monthly_credits", "max_iterations", "fidelities", "objectives",
                                         "max_aspects", "aspects", "max_angles", "max_speeds", "max_zones",
@@ -190,6 +196,29 @@ async def signup(request: Request):
         _apply_owner(con, uid, email)
         audit(con, uid, "signup", email)
         start_session(con, request, uid, resp)
+    return resp
+
+
+async def guest(request: Request):
+    """The public demo: a temporary account on the Guest plan, signed in at once, no email asked.
+    jobs.purge_guests deletes it (projects, runs and files) after GUEST_HOURS."""
+    if not settings.guest_demo:
+        err(404, "The guest demo is not enabled on this server.")
+    ip = _client_ip(request)
+    if not guest_limiter.allow("guest:" + ip):
+        err(429, "Too many demo accounts from this network. Try again in an hour.")
+    resp = JSONResponse({"ok": True})
+    with transaction() as con:
+        live = con.execute("SELECT COUNT(*) AS n FROM users WHERE billing_source='guest' AND created_at > ?",
+                           (time.time() - settings.guest_hours * 3600,)).fetchone()["n"]
+        if live >= settings.guest_max_active:
+            err(503, "The demo is full right now. Please try again later.")
+        email = f"guest-{secrets.token_hex(6)}@{GUEST_DOMAIN}"
+        cur = con.execute("""INSERT INTO users (email, name, password_hash, created_at, plan, plan_status, billing_source)
+                             VALUES (?, 'Guest', '!', ?, 'guest', 'active', 'guest')""", (email, time.time()))
+        uid = cur.lastrowid
+        audit(con, uid, "guest_created", ip)
+        start_session(con, request, uid, resp, max_age_s=settings.guest_hours * 3600)
     return resp
 
 
@@ -332,6 +361,19 @@ async def api_key(request: Request):
 
 
 # ---- catalog ------------------------------------------------------------------------------
+def compute_info():
+    """What the job workers run on and how long a CFD run takes there, measured by the worker
+    at start-up (jobs.warm_up). Before the first measurement: a laptop CPU's typical figure."""
+    from .cfd.analysis import FIDELITY, seconds_per_run
+    try:
+        info = json.loads((settings.data_dir / "compute.json").read_text())
+        mlups = float(info["mlups"])
+    except (OSError, ValueError, KeyError, TypeError):
+        info, mlups = {"backend": "cpu", "device": None}, 30.0
+    return {"backend": info.get("backend", "cpu"), "device": info.get("device"), "mlups": mlups,
+            "seconds_per_run": {k: round(seconds_per_run(f.cells, mlups), 1) for k, f in FIDELITY.items()}}
+
+
 async def plans(request: Request):
     from .geometry.ffd import ASPECTS
     from .optimize.runner import OBJECTIVES, objective_available
@@ -340,7 +382,8 @@ async def plans(request: Request):
     from .hyper.runner import OBJECTIVES as HYPER_OBJECTIVES
     from .rc.propeller import FAMILIES as PROP_FAMILIES
     return JSONResponse({
-        "plans": [{k: v for k, v in p.items()} for p in PLANS.values()],
+        "plans": [{k: v for k, v in p.items()} for p in PLANS.values() if not p.get("hidden")],
+        "guest_demo": settings.guest_demo, "signup_open": not settings.allowed_signup_emails,
         "trial_days": settings.trial_days, "billing_mode": settings.billing_mode,
         "credits_per_run": CREDITS_PER_RUN,
         "aspects": {k: {"label": a["label"], "help": a["help"],
@@ -348,6 +391,7 @@ async def plans(request: Request):
         "objectives": {**OBJECTIVES, "drag_fixed_lift": "Minimize drag at fixed lift"},
         "objectives_unvalidated": [k for k in OBJECTIVES if not objective_available(k)],
         "fidelities": {k: {"cells": f.cells, "re_cap": f.re_cap} for k, f in FIDELITY.items() if not f.internal},
+        "compute": compute_info(),
         "explore_fidelity": EXPLORE_FID,
         "templates": T.catalog(),
         "materials": MATERIALS,
@@ -670,6 +714,12 @@ def _clean_zones(items):
         item = {"id": str(z.get("id") or uuid.uuid4().hex[:8])[:16], "type": z["type"],
                 "shape": z.get("shape", "box"), "center": center, "size": size,
                 "name": str(z.get("name") or "")[:60]}
+        if z.get("rotation") is not None:
+            rot = [_num(v, "region rotation") for v in (z.get("rotation") or [])]
+            if len(rot) != 3 or max(abs(a) for a in rot) > 360:
+                err(400, "A region rotation is three angles in degrees (roll, pitch, yaw).")
+            if any(abs(a) > 1e-9 for a in rot):
+                item["rotation"] = [round(((a + 180.0) % 360.0) - 180.0, 4) for a in rot]
         if z["type"] == "material":
             item["material"] = _clean_material(z.get("material"))
         out.append(item)
@@ -822,7 +872,7 @@ def _clean_settings(data, old):
             err(400, "This project was not made from a template.")
         st["template"] = _clean_template(data["template"], st["template"])
     if data.get("fidelity") in ("draft", "standard", "high", "ultra"):
-        st["fidelity"] = data["fidelity"]
+        st["fidelity"] = "high" if data["fidelity"] == "ultra" else data["fidelity"]
     return st
 
 
@@ -923,13 +973,14 @@ async def project_thumb(request: Request):
 
 # ---- jobs ------------------------------------------------------------------------------------
 def _build_spec(data, project, plan):
-    from .cfd.analysis import FIDELITY
+    from .cfd.analysis import FIDELITY, fidelity_name
     st = json.loads(project["settings"] or "{}")
     kind = data.get("kind")
     if kind not in ("analyze", "optimize"):
         err(400, "kind must be analyze or optimize.")
-    fid = data.get("fidelity", "draft")
-    if fid not in FIDELITY:
+    try:
+        fid = fidelity_name(data.get("fidelity", "draft"))
+    except KeyError:
         err(400, "Unknown fidelity.")
     st = _clean_settings({k: data[k] for k in ("units", "forward", "up", "envelope", "zones", "tunnel", "propellers", "hyper")
                           if k in data}, st)
@@ -981,8 +1032,11 @@ def _build_spec(data, project, plan):
         if not (0.5 <= min_volume <= 1.0) or not (1.0 <= max_volume <= 3.0):
             err(400, "Volume limits are out of range.")
         verify = o.get("verify") or None
-        if verify is not None and verify not in FIDELITY:
-            err(400, "Unknown verification fidelity.")
+        if verify is not None:
+            try:
+                verify = fidelity_name(verify)
+            except KeyError:
+                err(400, "Unknown verification fidelity.")
         spec["optimize"] = {"objective": objective, "aspects": aspects, "iterations": iterations,
                             "max_change": max_change, "min_volume": min_volume, "max_volume": max_volume,
                             "verify": verify, "seed": int(o.get("seed", 7)) % 100000, **_search_options(o, tm, plan)}
@@ -1232,6 +1286,8 @@ async def billing_checkout(request: Request):
         err(400, "Choose Pro or Team.")
     with transaction() as con:
         user = current_user(request, con)
+        if user["billing_source"] == "guest":
+            err(403, "Guest demo accounts cannot change plan.")
         if user["plan"] == plan_key and user["plan_status"] in billing.ACTIVE:
             err(400, f"You are already on {PLANS[plan_key]['name']}.")
         mode = settings.billing_mode
@@ -1270,6 +1326,8 @@ async def billing_demo(request: Request):
     action = data.get("action")
     with db() as con:
         user = current_user(request, con)
+        if user["billing_source"] == "guest":
+            err(403, "Guest demo accounts cannot change plan.")
         if action == "cancel":
             billing.demo_cancel(con, user)
         elif action == "resume":
@@ -1436,6 +1494,7 @@ routes = [
     Route("/api/health", health),
     Route("/api/auth/signup", signup, methods=["POST"]),
     Route("/api/auth/login", login, methods=["POST"]),
+    Route("/api/auth/guest", guest, methods=["POST"]),
     Route("/api/auth/logout", logout, methods=["POST"]),
     Route("/api/auth/forgot", forgot, methods=["POST"]),
     Route("/api/auth/reset", reset, methods=["POST"]),

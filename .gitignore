@@ -6,6 +6,7 @@ data/
 # Local-only files
 tests/fixtures/dev_account.json
 Start public link.bat
+Start public demo.bat
 tools/cloudflared*
 .claude/
 

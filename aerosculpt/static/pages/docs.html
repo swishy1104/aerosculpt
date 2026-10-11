@@ -36,7 +36,10 @@
   </ul>
 
   <h2 id="protect">2. Protect</h2>
-  <p>Regions tell the optimizer what it must respect. Each is a box or a cylinder (cylinders run along the flow axis), with its centre and size in your model's own units. Add one, then click the model to place it and adjust the size.</p>
+  <p>Regions tell the optimizer what it must respect. Each is a box or a cylinder (a cylinder runs along the flow axis until you turn it), with its centre and size in your model's own units.
+    Add one and click the model to place it. Then shape it in the 3D view: drag the handles to <b>Move</b> (W), <b>Turn</b> (E) or <b>Resize</b> (R) it — the centre handle of Resize
+    scales evenly, and <b>Snap</b> (or holding Shift) steps turns by 15° and sizes by 5 %. Click any region in the view to select it. The card on the left shows the same numbers,
+    including the turn as roll, pitch and yaw about the airframe's axes, and you can type them exactly.</p>
   <table class="tbl"><thead><tr><th>Region</th><th>Effect</th><th>Typical use</th></tr></thead><tbody>
     <tr><td><b style="color:var(--protect)">Protect</b></td><td>Geometry inside never moves; the change fades out smoothly around it so the surface never tears.</td><td>Screw holes, mounting faces, fins, rail buttons, camera windows, couplers</td></tr>
     <tr><td><b style="color:var(--keep)">Keep inside</b></td><td>The volume must stay enclosed by the body. Shapes that would cut into it are rejected before any CFD is spent.</td><td>Payload bay, battery, motor tube, avionics sled</td></tr>
@@ -60,12 +63,15 @@
   </ul>
 
   <h2 id="simulate">4. Simulate</h2>
-  <table class="tbl"><thead><tr><th>Fidelity</th><th class="r">Tunnel cells</th><th class="r">Credits / run</th><th>Use it for</th></tr></thead><tbody>
-    <tr><td>Draft</td><td class="r">300,000</td><td class="r">1</td><td>Exploration, long optimizations</td></tr>
-    <tr><td>Standard</td><td class="r">1,000,000</td><td class="r">3</td><td>Design decisions</td></tr>
-    <tr><td>High</td><td class="r">2,500,000</td><td class="r">8</td><td>Final numbers, thin wings and fins</td></tr>
-    <tr><td>Ultra</td><td class="r">6,000,000</td><td class="r">20</td><td>Small features, publication</td></tr>
+  <table class="tbl"><thead><tr><th>Fidelity</th><th class="r">Tunnel cells</th><th class="r">Time / run (GPU)</th><th class="r">Time / run (CPU)</th><th class="r">Credits / run</th><th>Use it for</th></tr></thead><tbody>
+    <tr><td>Draft</td><td class="r">300,000</td><td class="r">≈ 3 s</td><td class="r">≈ 20 s</td><td class="r">1</td><td>Exploration, long optimizations</td></tr>
+    <tr><td>Standard</td><td class="r">1,000,000</td><td class="r">≈ 10 s</td><td class="r">≈ 1.5 min</td><td class="r">3</td><td>Design decisions</td></tr>
+    <tr><td>High</td><td class="r">2,500,000</td><td class="r">≈ 25 s</td><td class="r">≈ 5 min</td><td class="r">8</td><td>Final numbers, thin wings and fins</td></tr>
   </tbody></table>
+  <p class="small">The tunnel runs on an NVIDIA GPU when the server has one (measured on a laptop GTX 1650 Ti: about 400 million lattice
+    updates a second, twelve times the 6-core CPU) and falls back to the CPU otherwise; both give the same answer to within 0.2 %.
+    A run is one angle of attack; later angles warm-start from the flow of the previous one and finish sooner. The workspace shows the
+    time measured on the server you are using.</p>
   <p>Results include the drag polar (Cd against angle at each speed), lift curve and its slope CL<sub>α</sub>, L/D and where it peaks,
     pitching moment and its slope Cm<sub>α</sub> (negative means statically stable about the body centre), drag and power at every speed,
     a pressure/friction breakdown, and surface pressure, streamlines and slices at every angle. Use the α and V selectors at the bottom

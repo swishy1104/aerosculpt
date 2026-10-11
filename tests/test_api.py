@@ -92,6 +92,13 @@ def test_full_flow(client):
     assert r.status_code == 400
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "zones": [zone] * 3, "kind": "analyze"}, headers=H)
     assert r.status_code == 403
+    r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "zones": [dict(zone, rotation=[0, 400, 0])], "kind": "analyze"}, headers=H)
+    assert r.status_code == 400 and "rotation" in r.json()["error"]
+    # the internal exploration grid is not a choice; the retired Ultra level maps onto High (a paid level)
+    r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "analyze", "fidelity": "coarse"}, headers=H)
+    assert r.status_code == 400
+    r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "analyze", "fidelity": "ultra"}, headers=H)
+    assert r.status_code == 403
     # Mach limit: the General tunnel stops at Mach 1.2 (the Supersonic tunnel takes over)
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "envelope": {**env, "speed_max": 440}, "kind": "analyze"}, headers=H)
     assert r.status_code == 400 and "Mach" in r.json()["error"]
@@ -120,6 +127,10 @@ def test_full_flow(client):
     assert job["status"] == "queued" and job["estimated_credits"] == 14
     assert job["spec"]["envelope"]["speeds"] == [10.0, 20.0, 30.0] and job["spec"]["envelope"]["aoas"] == [0.0, 4.0]
     assert job["spec"]["zones"][0]["name"] == "mount"
+    cat = client.get("/api/plans").json()
+    assert "ultra" not in cat["fidelities"] and cat["compute"]["backend"] in ("cpu", "gpu")
+    sp = cat["compute"]["seconds_per_run"]
+    assert 0 < sp["coarse"] < sp["draft"] < sp["standard"] < sp["high"]
     # concurrency limit on Lite
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "analyze", "fidelity": "draft"}, headers=H)
     assert r.status_code == 429
@@ -345,3 +356,25 @@ def test_templates(client):
     assert locked.status_code == 200
     r = client.post(f"/api/projects/{p['id']}/jobs", json={"kind": "optimize", "optimize": {"iterations": 10, "top_k": 2}}, headers=H)
     assert r.status_code == 400 and "locked" in r.json()["error"]
+
+
+def test_guest_demo(client, monkeypatch):
+    from aerosculpt.jobs import purge_guests
+    client.post("/api/auth/logout", headers=H)
+    assert client.post("/api/auth/guest", headers=H).status_code == 404          # off unless GUEST_DEMO=1
+    assert client.get("/api/plans").json()["guest_demo"] is False
+    monkeypatch.setattr(settings, "guest_demo", True)
+    cat = client.get("/api/plans").json()
+    assert cat["guest_demo"] and "guest" not in [p["key"] for p in cat["plans"]]  # never offered on the pricing page
+    r = client.post("/api/auth/guest", headers=H)
+    assert r.status_code == 200, r.text
+    me = client.get("/api/me").json()
+    assert me["guest"] and me["plan"] == "guest" and me["limits"]["fidelities"] == ["draft", "standard"]
+    assert me["guest_expires_at"] > time.time()
+    assert client.post("/api/billing/checkout", json={"plan": "pro"}, headers=H).status_code == 403
+    p = client.post("/api/projects", json={"sample": "sphere"}, headers=H)
+    assert p.status_code in (200, 201), p.text
+    # expired guests are deleted with everything they made; live ones are kept
+    assert purge_guests() == 0
+    assert purge_guests(now=time.time() + settings.guest_hours * 3600 + 60) >= 1
+    assert client.get("/api/me").status_code == 401

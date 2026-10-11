@@ -15,6 +15,24 @@ readTheme();
 addEventListener("themechange", () => { readTheme(); ctx.clearRect(0, 0, W, H); });
 siteNav();
 siteFooter();
+// a public deployment may offer a no-account demo (GUEST_DEMO); invite-only servers send people to sign in
+fetch("/api/plans").then((r) => r.json()).then((cat) => {
+  document.querySelectorAll("[data-start]").forEach((a) => {
+    if (cat.guest_demo) {
+      a.textContent = "Try the live demo";
+      a.addEventListener("click", async (e) => {
+        e.preventDefault();
+        a.classList.add("busy");
+        const r = await fetch("/api/auth/guest", { method: "POST", headers: { "X-Requested-With": "AeroSculpt" }, credentials: "same-origin" });
+        if (r.ok) location.href = "/app?welcome=1";
+        else { a.classList.remove("busy"); a.textContent = (await r.json().catch(() => ({}))).error || "The demo is unavailable right now"; }
+      });
+    } else if (!cat.signup_open) {
+      a.textContent = "Sign in";
+      a.href = "/login";
+    }
+  });
+}).catch(() => {});
 document.querySelectorAll("[data-i]").forEach((el) => { el.innerHTML = icon(el.dataset.i); });
 
 // Hero: potential flow around a Rankine oval, traced by drifting particles.

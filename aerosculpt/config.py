@@ -57,6 +57,11 @@ class Settings:
     allowed_signup_emails = {e.strip().lower() for e in os.environ.get("ALLOWED_SIGNUP_EMAILS", "").split(",") if e.strip()}
     # the site owner(s): admin with the Team plan, without billing (for a private deployment)
     owner_emails = {e.strip().lower() for e in os.environ.get("OWNER_EMAILS", "").split(",") if e.strip()}
+    # public guest demo: "Try it without an account" makes a temporary account on the Guest plan
+    # (a few credits, draft and standard fidelity, lowest queue priority), deleted after GUEST_HOURS
+    guest_demo = _bool("GUEST_DEMO", False)
+    guest_hours = float(os.environ.get("GUEST_HOURS", "24"))
+    guest_max_active = int(os.environ.get("GUEST_MAX_ACTIVE", "60"))
 
     # Email (password resets). Without SMTP the link is written to the server log.
     smtp_host = os.environ.get("SMTP_HOST", "")

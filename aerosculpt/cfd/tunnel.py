@@ -115,6 +115,7 @@ class RunStats:
 
 class Tunnel:
     """Holds the lattice and runs the flow. Geometry can be swapped for warm starts."""
+    backend = "cpu"
 
     def __init__(self, domain: Domain, flow: FlowSettings):
         self.domain = domain

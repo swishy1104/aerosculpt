@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..cfd.analysis import FIDELITY, Evaluator, at_speed, isa, mirror_run, reynolds_groups
+from ..cfd.analysis import FIDELITY, RETIRED, Evaluator, at_speed, isa, mirror_run, reynolds_groups
 from numba import njit
 from ..geometry.ffd import refine
 from ..geometry.mesh import UNIT_SCALE, Mesh, body_to_wind, load_mesh, projected_area
@@ -33,6 +33,15 @@ LIFT_OBJECTIVES = ("ld", "drag_keep_lift")
 
 def objective_available(kind):
     return kind in OBJECTIVES and (LIFT_VALIDATED or kind not in LIFT_OBJECTIVES)
+
+
+def live_run(r, label, aoa, speed, f, cd, trace):
+    """Progress extra describing the CFD run in progress: which one, and its drag coefficient
+    chunk by chunk as the flow settles (the workspace draws it live)."""
+    if cd is not None and math.isfinite(cd):
+        trace.append(round(float(cd), 5))
+    return {"run": {"i": r.run_index + 1, "n": r.total_runs, "label": label, "aoa": aoa, "speed": speed,
+                    "f": round(min(float(f), 1.0), 3), "trace": trace[-48:]}}
 
 
 class JobCancelled(Exception):
@@ -272,7 +281,7 @@ class Runner:
         if mach > 1.2:
             raise ValueError(f"Mach {mach:.2f} is beyond this tunnel (max 1.2); use the Supersonic tunnel")
         self.mach_max = mach
-        self.fid = FIDELITY[spec.get("fidelity", "draft")]
+        self.fid = FIDELITY[RETIRED.get(spec.get("fidelity", "draft"), spec.get("fidelity", "draft"))]
         self.zones = from_spec([z for z in spec.get("zones", []) if z.get("type") in ("protect", "keep", "design")],
                                self.frame.scale, self.frame.R0, self.frame.center)
         body = self.frame.body
@@ -288,7 +297,8 @@ class Runner:
 
     def simulated_angles(self, body, can_mirror=True):
         sym = (can_mirror and self.yaw == 0.0 and any(a < 0 for a in self.aoas)
-               and all(abs(z.center[2]) < 1e-3 * self.L_body for z in self.zones) and is_z_symmetric(body))
+               and all(abs(z.center[2]) < 1e-3 * self.L_body and (z.R is None or z.z_symmetric) for z in self.zones)
+               and is_z_symmetric(body))
         self.symmetric = bool(sym)
         if sym:
             self.log("body is symmetric top-to-bottom: negative angles are mirrored, not re-simulated")
@@ -321,9 +331,12 @@ class Runner:
                 frac0 = self.run_index / self.total_runs
                 frac1 = (self.run_index + 1) / self.total_runs
 
-                def prog(f, cd, frac0=frac0, frac1=frac1, a=a):
+                trace = []
+
+                def prog(f, cd, frac0=frac0, frac1=frac1, a=a, trace=trace):
                     self._progress(0.02 + 0.96 * (frac0 + (frac1 - frac0) * min(f, 1.0)),
-                                   f"{label} · {a:g}° · CFD run {self.run_index + 1} of {self.total_runs}")
+                                   f"{label} · {a:g}° · CFD run {self.run_index + 1} of {self.total_runs}",
+                                   live_run(self, label, a, None, f, cd, trace))
                 try:
                     runs[(a, re)] = ev.run(wind, re, key=(a, re), want_fields=(re == self.re_groups[0]) and self.fields_wanted,
                                            progress=prog, groups=groups)

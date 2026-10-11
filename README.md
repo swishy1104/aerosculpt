@@ -61,9 +61,22 @@ Without Stripe keys billing runs in **demo mode**: upgrades are granted instantl
 payment, and a banner says so on every page. The first CFD job compiles the solver
 kernels (about 30 s once; cached afterwards).
 
+### NVIDIA GPU (optional, about 12x faster)
+
 ```bash
-python -m pytest -q          # 67 tests: geometry, templates, wing model, solver, optimizer, API, billing
-python run.py validate       # full validation suite (~60 min), feeds /validation
+pip install "numba-cuda[cu12]==0.30.4"
+```
+
+With an NVIDIA GPU and that package the wind tunnel runs on the GPU automatically; without them it
+runs on the CPU. `AEROSCULPT_GPU=0` forces the CPU, `=1` refuses to start without the GPU. Both use
+kernels generated from one source (`tools/gen_kernels.py`) and agree to 0.2 %. Measured on a laptop
+(i7-10750H, GTX 1650 Ti): a 3-angle draft sweep of the rocket takes 9 s on the GPU against 56 s on
+the CPU; a standard-fidelity sphere 10 s against 135 s. Each worker measures its speed at start-up
+and the workspace shows the expected time per run from it.
+
+```bash
+python -m pytest -q          # 70 tests: geometry, templates, wing model, solver, optimizer, API, billing
+python run.py validate       # full validation suite (~4 min on the GPU, ~60 min on the CPU), feeds /validation
 python run.py validate supersonic,rc,wing   # the fast groups (~1 min)
 ```
 
@@ -78,6 +91,11 @@ The site runs on this computer: it is online only while the window is open, and 
 changes every time it starts. Front-end edits show on reload; Python edits need a restart (and so
 a new address). For a fixed address use a named Cloudflare tunnel (needs a Cloudflare account and
 a domain) or a server (below).
+
+`Start public demo.bat` (or `--demo`) also turns on the **guest demo** (`GUEST_DEMO=1`): visitors
+press "Try the live demo" and get a temporary account on the hidden Guest plan (30 credits, draft
+and standard fidelity, lowest queue priority, at most `GUEST_MAX_ACTIVE` at once, 4 per network an
+hour). The account, its projects and its runs are deleted after `GUEST_HOURS` (24).
 
 ## Going live
 

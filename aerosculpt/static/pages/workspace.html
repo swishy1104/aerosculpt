@@ -236,8 +236,20 @@
       </div>
     </div>
     <div class="pick-hint hidden" id="pick-hint">Click the model where this region should go · Esc to cancel</div>
+    <div class="zone-tools hidden" id="zone-tools" role="toolbar" aria-label="Edit the selected region">
+      <span class="zt-name" id="zt-name"></span>
+      <div class="seg">
+        <button type="button" data-tool="translate" title="Move (W)"><span data-i="move"></span>Move</button>
+        <button type="button" data-tool="rotate" title="Turn (E)"><span data-i="rotate"></span>Turn</button>
+        <button type="button" data-tool="scale" title="Resize (R) · the centre handle scales evenly"><span data-i="scale"></span>Resize</button>
+      </div>
+      <button class="btn sm ghost" id="zt-snap" type="button" title="Snap turns to 15° and sizes to 5 % (or hold Shift while dragging)">Snap</button>
+      <button class="btn sm ghost" id="zt-reset" type="button" title="Square it up with the airframe axes">Reset turn</button>
+      <button class="btn sm" id="zt-done" type="button" title="Close (Esc)"><span data-i="check"></span>Done</button>
+    </div>
     <div class="vp-empty" id="vp-empty"><span class="spin"></span><span>Loading model…</span></div>
     <div class="vp-info" id="vp-info"></div>
+    <div class="run-card hidden" id="run-card" role="status" aria-live="polite"></div>
     <div class="vp-cond hidden" id="vp-cond"></div>
     <div class="vp-corner"><div class="colorbar hidden" id="colorbar"><div class="t"></div><div class="bar"></div><div class="ticks"></div></div></div>
   </section>
