@@ -17,9 +17,9 @@ export function showValue(p, v) {
   const u = UNIT[p.unit] || UNIT["-"];
   return `${(+v * u.k).toFixed(u.dp).replace(/\.0+$/, "")}${u.label ? (u.label === "°" ? "°" : " " + u.label) : ""}`;
 }
-const toDisp = (p, v) => +(v * (UNIT[p.unit] || UNIT["-"]).k).toFixed(6);
-const fromDisp = (p, v) => v / (UNIT[p.unit] || UNIT["-"]).k;
-const stepOf = (p, lo, hi) => {
+export const toDisp = (p, v) => +(v * (UNIT[p.unit] || UNIT["-"]).k).toFixed(6);
+export const fromDisp = (p, v) => v / (UNIT[p.unit] || UNIT["-"]).k;
+export const stepOf = (p, lo, hi) => {
   const span = Math.abs(hi - lo) * (UNIT[p.unit] || UNIT["-"]).k;
   const raw = span / 200;
   const pow = 10 ** Math.floor(Math.log10(raw || 1));

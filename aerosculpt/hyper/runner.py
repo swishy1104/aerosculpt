@@ -53,6 +53,7 @@ class HyperRunner(Runner):
         self.material_zones = list(zip(from_spec(mzones, self.frame.scale, self.frame.R0, self.frame.center),
                                        [mat.resolve(z.get("material", mat.DEFAULT)) for z in mzones]))
         self.materials = [self.material] + [m_ for _, m_ in self.material_zones]
+        self.apply_features()
         body = self.frame.body
         lo, hi = body.bbox()
         self.L_body = float(hi[0] - lo[0])
@@ -156,7 +157,7 @@ class HyperRunner(Runner):
         """Screening and Bayesian search over template parameters or the body deformation, on the
         surface methods (deterministic: no error probe or confirmation level needed)."""
         from ..optimize.driver import constraints_from
-        from ..optimize.spaces import DeformSpace, TemplateSpace
+        from ..optimize.spaces import DeformSpace, FeatureSpace, FixedSpace, TemplateSpace
         from ..optimize.strategy import Search
         o = self.spec.get("optimize", {})
         obj_kind = o.get("objective", "drag")
@@ -171,16 +172,24 @@ class HyperRunner(Runner):
             aspects, mode = [], "parameters"
         else:
             aspects = [a for a in o.get("aspects", ["nose", "tail"]) if a in ASPECTS]
-            if not aspects:
+            if not aspects and not self.features:
                 raise ValueError("choose at least one design aspect to modify")
-            body = self.frame.body
-            if "fairing" in aspects:
-                lo, hi = body.bbox()
-                body = refine(body, max_edge=float((hi - lo).max()) / 45.0)
-                self.frame.body = body
-            space = DeformSpace(Deformer(body, design_space(aspects, float(o.get("max_change", 0.25))), self.zones),
-                                constraints)
-            mode = "aspects"
+            body = self.base_body
+            if aspects:
+                if "fairing" in aspects:
+                    lo, hi = body.bbox()
+                    body = refine(body, max_edge=float((hi - lo).max()) / 45.0)
+                    if not self.features:
+                        self.frame.body = body
+                space = DeformSpace(Deformer(body, design_space(aspects, float(o.get("max_change", 0.25))), self.zones),
+                                    constraints)
+                mode = "aspects"
+            else:
+                space, mode = FixedSpace(body), "features"
+        if self.features:
+            space = FeatureSpace(space, self.features, self.feature_frame(), constraints)
+            if not space.vars:
+                raise ValueError("nothing to optimize: unlock a shape-feature dimension or choose a design aspect")
         base_ref = {}
 
         def evaluate(cand, label):
@@ -212,7 +221,10 @@ class HyperRunner(Runner):
         J1 = hyper_objective(obj_kind, best_polar, base_polar, respect)
         bs, os_ = hyper_summary(base_polar), hyper_summary(best_polar)
         bv = base_c.info.get("volume")
-        vr = space.dfm.volume_ratio(best_c.mesh) if mode == "aspects" else (best_c.info.get("volume") / bv if bv else 1.0)
+        if self.features and mode != "aspects":
+            vr = space.FT.union_volume(best_c.mesh) / space.base_union if space.base_union else 1.0
+        else:
+            vr = space.dfm.volume_ratio(best_c.mesh) if mode == "aspects" else (best_c.info.get("volume") / bv if bv else 1.0)
         num = lambda v: float(v) if isinstance(v, (int, float, np.floating)) else v
         result = {
             "kind": "optimize", **self.common(), "mode": mode, "objective": obj_kind, "objective_label": OBJECTIVES[obj_kind],
@@ -237,6 +249,9 @@ class HyperRunner(Runner):
         if tmpl:
             result["template"] = {"id": tmpl["id"], "base_values": {k: num(v) for k, v in base_c.values.items()},
                                   "best_values": result["best_values"], "info_base": base_c.info, "info_best": best_c.info}
+        if self.features:
+            result["features"] = {"changes": [{**c, "base": num(c["base"]), "best": num(c["best"])} for c in space.changes(best_c)],
+                                  "list": [{"id": f["id"], "name": f["name"], "type": f["type"]} for f in space.features]}
         self.write_json("result.json", result)
         self.write_json("history.json", search.history)
         self._progress(1.0, "Done", {"history": search.history[-60:]})

@@ -449,6 +449,8 @@ class Evaluator:
         tri = self.domain.to_lattice(mesh.triangles().reshape(-1, 3)).reshape(-1, 3, 3)
         cen = tri.mean(axis=1)
         areas, nrm = mesh.face_areas_normals()
+        if getattr(mesh, "hidden", None) is not None:    # buried inside another shell: not wetted
+            areas = np.where(mesh.hidden, 0.0, areas)
         rho_s = _sample_fluid(rho, solid, cen + 1.5 * nrm)
         spd_s = _sample_fluid(spd, solid, cen + 1.5 * nrm)
         bad = ~np.isfinite(rho_s)

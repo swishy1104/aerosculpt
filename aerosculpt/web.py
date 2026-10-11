@@ -14,6 +14,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import numpy as np
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
@@ -152,7 +153,7 @@ def user_public(con, user):
         "has_api_key": bool(user["api_key_hash"]), "api_key_prefix": user["api_key_prefix"],
         "limits": {k: plan[k] for k in ("monthly_credits", "max_iterations", "fidelities", "objectives",
                                         "max_aspects", "aspects", "max_angles", "max_speeds", "max_zones",
-                                        "max_propellers", "max_iterations_panel", "max_top_k",
+                                        "max_propellers", "max_iterations_panel", "max_top_k", "max_features",
                                         "max_projects", "max_upload_mb", "max_triangles",
                                         "export", "verify", "reports", "api", "concurrent_jobs")},
         "usage": usage, "credits_left": max(0, plan["monthly_credits"] - usage["credits"]),
@@ -361,6 +362,11 @@ async def api_key(request: Request):
 
 
 # ---- catalog ------------------------------------------------------------------------------
+def FT_catalog():
+    from .geometry import features as FT
+    return FT.catalog()
+
+
 def compute_info():
     """What the job workers run on and how long a CFD run takes there, measured by the worker
     at start-up (jobs.warm_up). Before the first measurement: a laptop CPU's typical figure."""
@@ -394,6 +400,7 @@ async def plans(request: Request):
         "compute": compute_info(),
         "explore_fidelity": EXPLORE_FID,
         "templates": T.catalog(),
+        "features": FT_catalog(),
         "materials": MATERIALS,
         "hyper_objectives": dict(HYPER_OBJECTIVES),
         "prop_families": {k: {"name": f["name"], "note": f["note"]} for k, f in PROP_FAMILIES.items()},
@@ -446,6 +453,79 @@ async def template_build(request: Request):
     tri = b.mesh.triangles().astype("<f4")
     return JSONResponse({"positions": base64.b64encode(tri.tobytes()).decode("ascii"), "faces": int(len(tri)),
                          "info": b.info, "problems": b.problems, "ref": b.ref, "values": vals})
+
+
+def _model_frame(project, st):
+    """The project's model in the optimizer's body frame (optimize.runner.ModelFrame)."""
+    from .optimize.runner import ModelFrame, load_model
+    path = project_dir(project["id"]) / ("model." + project["filename"].rsplit(".", 1)[-1].lower())
+    raw = load_model(path, project["filename"])
+    return ModelFrame(raw, st.get("units", "m"), st.get("forward", "-x"), st.get("up", "+z"))
+
+
+def _features_body(project, st, features):
+    from .geometry import features as FT
+    fr = _model_frame(project, st)
+    ff = FT.Frame(fr.scale, fr.R0, fr.center)
+    body, problems, info = FT.apply(fr.body, features, ff) if features else (fr.body, [], {})
+    return fr, ff, body, problems, info
+
+
+async def feature_suggest(request: Request):
+    """A new shape feature fitted to the model where the user clicked (file coordinates), on top
+    of the features already there."""
+    from .geometry import features as FT
+    with db() as con:
+        user = current_user(request, con)
+        project = _get_project(con, user, request.path_params["pid"])
+    data = await body_json(request, limit=200_000)
+    if data.get("type") not in FT.FEATURES:
+        err(400, "Unknown shape feature.")
+    st = _migrate(json.loads(project["settings"] or "{}"))
+    existing = [f for f in _clean_features(data.get("features", st.get("features") or [])) if f.get("enabled", True)]
+
+    def work():
+        fr, ff, body, _, _ = _features_body(project, st, existing)
+        point = ff.point(_num3(data["point"], "point")) if data.get("point") is not None else None
+        normal = _num3(data["normal"], "normal") if data.get("normal") is not None else None
+        return FT.suggest(data["type"], body, ff, point, normal)
+
+    try:
+        f = await run_in_threadpool(work)
+    except ValueError as e:
+        err(400, str(e))
+    return JSONResponse(f)
+
+
+def _num3(v, what):
+    vals = [_num(x, what) for x in (v or [])]
+    if len(vals) != 3:
+        err(400, f"Invalid {what}.")
+    return vals
+
+
+async def feature_build(request: Request):
+    """The model with its shape features applied, for the live 3D view (no simulation):
+    triangles as base64 float32 in the body frame, plus what is buried and any problems."""
+    from .geometry import checks
+    with db() as con:
+        user = current_user(request, con)
+        project = _get_project(con, user, request.path_params["pid"])
+    data = await body_json(request, limit=500_000)
+    st = _migrate(json.loads(project["settings"] or "{}"))
+    feats = [f for f in _clean_features(data.get("features") or []) if f.get("enabled", True)]
+
+    def work():
+        fr, ff, body, problems, info = _features_body(project, st, feats)
+        bad = checks.check(body) if feats and body.n_faces <= 300_000 else None
+        return body, problems, info, bad
+
+    body, problems, info, bad = await run_in_threadpool(work)
+    tri = body.triangles().astype("<f4")
+    hidden = body.hidden if getattr(body, "hidden", None) is not None else np.zeros(body.n_faces, bool)
+    return JSONResponse({"positions": base64.b64encode(tri.tobytes()).decode("ascii"), "faces": int(len(tri)),
+                         "hidden": base64.b64encode(np.packbits(hidden).tobytes()).decode("ascii"),
+                         "problems": problems + ([f"the result is {bad}"] if bad else []), "info": info})
 
 
 TEMPLATE_ENVELOPES = {
@@ -726,6 +806,39 @@ def _clean_zones(items):
     return out
 
 
+def _clean_features(items):
+    from .geometry import features as FT
+    if not isinstance(items, list) or len(items) > FT.MAX_FEATURES:
+        err(400, f"Up to {FT.MAX_FEATURES} shape features.")
+    out = []
+    for f in items:
+        try:
+            out.append(FT.clean(f))
+        except ValueError as e:
+            err(400, f"Shape feature: {e}.")
+    if len({f["id"] for f in out}) != len(out):
+        err(400, "Two shape features share an id.")
+    return out
+
+
+def _free_features(features):
+    """Whether any enabled feature has a dimension left free for the optimizer."""
+    from .geometry import features as FT
+    for f in features:
+        for p in FT.get(f["type"])["params"]:
+            if not FT.locked(p, f) and T.active(p, f["values"]):
+                return True
+    return False
+
+
+def _job_features(st, tm, kind):
+    feats = [f for f in st.get("features") or [] if f.get("enabled", True)]
+    if feats and tm and tm["id"] in ("uav", "wing"):
+        err(400, "Shape features need a CFD tunnel: the UAV and wing templates use the wing model. "
+                 "Switch them off, or start from an uploaded model.")
+    return feats
+
+
 def _clean_material(m):
     from .hyper.materials import MATERIALS, resolve
     if isinstance(m, str) and m in MATERIALS:
@@ -857,6 +970,8 @@ def _clean_settings(data, old):
         st["envelope"] = env
     if "zones" in data:
         st["zones"] = _clean_zones(data["zones"])
+    if "features" in data:
+        st["features"] = _clean_features(data["features"])
     if "tunnel" in data:
         if data["tunnel"] not in TUNNELS:
             err(400, "Unknown tunnel.")
@@ -982,8 +1097,8 @@ def _build_spec(data, project, plan):
         fid = fidelity_name(data.get("fidelity", "draft"))
     except KeyError:
         err(400, "Unknown fidelity.")
-    st = _clean_settings({k: data[k] for k in ("units", "forward", "up", "envelope", "zones", "tunnel", "propellers", "hyper")
-                          if k in data}, st)
+    st = _clean_settings({k: data[k] for k in ("units", "forward", "up", "envelope", "zones", "tunnel", "propellers", "hyper",
+                                                "features") if k in data}, st)
     st = _migrate(st)
     tunnel = st.get("tunnel", "general")
     if tunnel == "supersonic":
@@ -1002,11 +1117,12 @@ def _build_spec(data, project, plan):
     tm = st.get("template")
     if tm:
         spec["template"] = {"id": tm["id"], "values": tm["values"]}
+    spec["features"] = _job_features(st, tm, kind)
     if kind == "optimize":
         o = data.get("optimize") or {}
         aspects = [] if tm else [a for a in o.get("aspects", []) if a in ALL_ASPECTS]
-        if not tm and not aspects:
-            err(400, "Choose at least one design aspect to improve.")
+        if not tm and not aspects and not _free_features(spec["features"]):
+            err(400, "Choose at least one design aspect to improve, or unlock a shape-feature dimension.")
         objective = o.get("objective", "drag")
         if tm and tm["id"] in ("uav", "wing"):
             objective = "drag_fixed_lift"
@@ -1039,7 +1155,8 @@ def _build_spec(data, project, plan):
                 err(400, "Unknown verification fidelity.")
         spec["optimize"] = {"objective": objective, "aspects": aspects, "iterations": iterations,
                             "max_change": max_change, "min_volume": min_volume, "max_volume": max_volume,
-                            "verify": verify, "seed": int(o.get("seed", 7)) % 100000, **_search_options(o, tm, plan)}
+                            "verify": verify, "seed": int(o.get("seed", 7)) % 100000,
+                            **_search_options(o, tm, plan, _free_features(spec["features"]))}
     try:
         check_spec(spec, plan)
     except PermissionError as e:
@@ -1057,7 +1174,7 @@ def _build_spec(data, project, plan):
     return spec, st, len(groups)
 
 
-def _search_options(o, tm, plan):
+def _search_options(o, tm, plan, free_features=False):
     """Settings of the screening / search / confirmation strategy and the design constraints."""
     out = {}
     try:
@@ -1081,7 +1198,7 @@ def _search_options(o, tm, plan):
         out["params"] = tm.get("params") or {}
         free = [p for p in T.get(tm["id"])["params"]
                 if not out["params"].get(p.key, {}).get("locked", p.locked) and T.active(p, tm["values"])]
-        if not free:
+        if not free and not free_features:
             err(400, "Every parameter is locked. Unlock at least one for the optimizer to change.")
     return out
 
@@ -1099,11 +1216,12 @@ def _build_hyper_spec(data, kind, st, plan):
     tm = st.get("template")
     if tm:
         spec["template"] = {"id": tm["id"], "values": tm["values"]}
+    spec["features"] = _job_features(st, tm, kind)
     if kind == "optimize":
         o = data.get("optimize") or {}
         aspects = [] if tm else [a for a in o.get("aspects", []) if a in ALL_ASPECTS]
-        if not tm and not aspects:
-            err(400, "Choose at least one design aspect to improve.")
+        if not tm and not aspects and not _free_features(spec["features"]):
+            err(400, "Choose at least one design aspect to improve, or unlock a shape-feature dimension.")
         objective = o.get("objective", "drag")
         if objective not in HYPER_OBJECTIVES:
             err(400, "Unknown objective for the supersonic tunnel.")
@@ -1123,7 +1241,7 @@ def _build_hyper_spec(data, kind, st, plan):
         spec["optimize"] = {"objective": objective, "aspects": aspects, "iterations": iterations,
                             "max_change": max_change, "min_volume": min_volume, "max_volume": max_volume,
                             "respect_limits": bool(o.get("respect_limits", True)), "seed": int(o.get("seed", 7)) % 100000,
-                            **_search_options(o, tm, plan)}
+                            **_search_options(o, tm, plan, _free_features(spec["features"]))}
     try:
         check_spec(spec, plan)
     except PermissionError as e:
@@ -1513,6 +1631,8 @@ routes = [
     Route("/api/projects/{pid}/model", project_model),
     Route("/api/projects/{pid}/thumbnail", project_thumb, methods=["GET", "POST"]),
     Route("/api/projects/{pid}/jobs", project_jobs, methods=["GET", "POST"]),
+    Route("/api/projects/{pid}/features/suggest", feature_suggest, methods=["POST"]),
+    Route("/api/projects/{pid}/features/build", feature_build, methods=["POST"]),
     Route("/api/jobs/{jid}", job_item),
     Route("/api/jobs/{jid}/cancel", job_cancel, methods=["POST"]),
     Route("/api/jobs/{jid}/files/{name}", job_file),

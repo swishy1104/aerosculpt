@@ -284,6 +284,7 @@ class Runner:
         self.fid = FIDELITY[RETIRED.get(spec.get("fidelity", "draft"), spec.get("fidelity", "draft"))]
         self.zones = from_spec([z for z in spec.get("zones", []) if z.get("type") in ("protect", "keep", "design")],
                                self.frame.scale, self.frame.R0, self.frame.center)
+        self.apply_features()
         body = self.frame.body
         lo, hi = body.bbox()
         self.L_body = float(hi[0] - lo[0])
@@ -291,6 +292,24 @@ class Runner:
         self.planform_area = projected_area(body, 2)
         self.ref_length = float(env.get("ref_length") or self.L_body)
         self.re_by_speed, self.re_groups = reynolds_groups(self.speeds, self.L_body, self.air["nu"], self.fid.re_cap)
+
+    def feature_frame(self):
+        from ..geometry.features import Frame
+        return Frame(self.frame.scale, self.frame.R0, self.frame.center)
+
+    def apply_features(self):
+        """Shape features (spec["features"]) on the model: the body every run sees. The model
+        without them stays in base_body for the optimizer to build on."""
+        self.features = [f for f in self.spec.get("features") or [] if f.get("enabled", True)]
+        self.base_body = self.frame.body
+        if self.features:
+            from ..geometry.features import apply
+            body, problems, info = apply(self.frame.body, self.features, self.feature_frame())
+            for pr in problems:
+                self.log(f"shape feature: {pr}")
+            self.log(f"{len(self.features)} shape feature(s) applied: {info['faces']:,} faces, "
+                     f"{info['hidden_faces']:,} buried inside other parts")
+            self.frame.body = body
 
     def runs_per_design(self):
         return len(self.sim_angles) * len(self.re_groups)

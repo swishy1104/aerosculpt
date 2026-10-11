@@ -21,7 +21,7 @@ PLANS = {
         "key": "lite", "name": "Lite", "price_month": 0, "tagline": "Free forever, for first looks",
         "monthly_credits": 40, "max_iterations": 12, "fidelities": ["draft"],
         "objectives": ["drag", "drag_fixed_lift"], "max_aspects": 2, "aspects": ALL_ASPECTS, "max_top_k": 2,
-        "max_angles": 3, "max_speeds": 4, "max_zones": 2, "max_propellers": 1, "max_iterations_panel": 30,
+        "max_angles": 3, "max_speeds": 4, "max_zones": 2, "max_propellers": 1, "max_iterations_panel": 30, "max_features": 4,
         "max_projects": 3, "max_upload_mb": 25, "max_triangles": 300_000,
         "export": False, "verify": False, "reports": False, "api": False,
         "priority": 0, "concurrent_jobs": 1,
@@ -34,7 +34,7 @@ PLANS = {
         "key": "pro", "name": "Pro", "price_month": 49, "tagline": "For engineers shipping airframes",
         "monthly_credits": 1500, "max_iterations": 60, "fidelities": ["draft", "standard", "high"],
         "objectives": ALL_OBJECTIVES, "max_aspects": len(ALL_ASPECTS), "aspects": ALL_ASPECTS, "max_top_k": 6,
-        "max_angles": 9, "max_speeds": 12, "max_zones": 20, "max_propellers": 4, "max_iterations_panel": 200,
+        "max_angles": 9, "max_speeds": 12, "max_zones": 20, "max_propellers": 4, "max_iterations_panel": 200, "max_features": 24,
         "max_projects": None, "max_upload_mb": 150, "max_triangles": 2_000_000,
         "export": True, "verify": True, "reports": True, "api": False,
         "priority": 10, "concurrent_jobs": 2, "trial": True,
@@ -48,7 +48,7 @@ PLANS = {
         "key": "team", "name": "Team", "price_month": 199, "tagline": "For labs, teams and suppliers",
         "monthly_credits": 6000, "max_iterations": 150, "fidelities": ["draft", "standard", "high"],
         "objectives": ALL_OBJECTIVES, "max_aspects": len(ALL_ASPECTS), "aspects": ALL_ASPECTS, "max_top_k": 8,
-        "max_angles": 15, "max_speeds": 20, "max_zones": 40, "max_propellers": 8, "max_iterations_panel": 500,
+        "max_angles": 15, "max_speeds": 20, "max_zones": 40, "max_propellers": 8, "max_iterations_panel": 500, "max_features": 24,
         "max_projects": None, "max_upload_mb": 400, "max_triangles": 5_000_000,
         "export": True, "verify": True, "reports": True, "api": True,
         "priority": 20, "concurrent_jobs": 4,
@@ -123,6 +123,8 @@ def check_spec(spec: dict, plan: dict):
         raise PermissionError(f"{plan['name']} sweeps up to {plan['max_speeds']} {'Mach numbers' if supersonic else 'airspeeds'}.")
     if len(spec.get("zones", [])) > plan["max_zones"]:
         raise PermissionError(f"{plan['name']} allows {plan['max_zones']} protected regions.")
+    if len(spec.get("features", [])) > plan.get("max_features", 0):
+        raise PermissionError(f"{plan['name']} allows {plan.get('max_features', 0)} shape features.")
     if spec.get("kind") == "optimize":
         o = spec.get("optimize", {})
         it = int(o.get("iterations", 0))

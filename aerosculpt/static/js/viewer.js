@@ -258,6 +258,14 @@ export class Viewer {
     return true;
   }
 
+  /** Snap turns to 15 deg and sizes to 5 % (safe mid-drag: nothing is rebuilt). */
+  setZoneSnap(on) {
+    if (!this.zoneTool) return;
+    this.zoneTool.tc.setRotationSnap(on ? THREE.MathUtils.degToRad(15) : null);
+    this.zoneTool.tc.setScaleSnap(on ? 0.05 : null);
+    if (this._zoneToolArgs) this._zoneToolArgs[2].snap = on;
+  }
+
   detachZoneTool(keepArgs = false) {
     if (!this.zoneTool) return;
     this.zoneTool.tc.detach();
@@ -462,7 +470,12 @@ export class Viewer {
     this.raycaster.setFromCamera(ndc, this.camera);
     const hit = this.raycaster.intersectObject(this.mesh, false)[0];
     if (!hit) return null;
-    return this.root.worldToLocal(hit.point.clone());
+    const p = this.root.worldToLocal(hit.point.clone());
+    if (hit.face) {
+      p.normal = hit.face.normal.clone();
+      if (p.normal.dot(this.raycaster.ray.direction) > 0 && this.root.scale.z > 0) p.normal.negate();   // clicked from inside
+    }
+    return p;
   }
 
   // ---- slices ------------------------------------------------------------------------------

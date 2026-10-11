@@ -75,7 +75,7 @@ the CPU; a standard-fidelity sphere 10 s against 135 s. Each worker measures its
 and the workspace shows the expected time per run from it.
 
 ```bash
-python -m pytest -q          # 70 tests: geometry, templates, wing model, solver, optimizer, API, billing
+python -m pytest -q          # 84 tests: geometry, templates, wing model, solver, optimizer, API, billing
 python run.py validate       # full validation suite (~4 min on the GPU, ~60 min on the CPU), feeds /validation
 python run.py validate supersonic,rc,wing   # the fast groups (~1 min)
 ```
@@ -114,6 +114,16 @@ hour). The account, its projects and its runs are deleted after `GUEST_HOURS` (2
 
 Prices, credits and limits live in `aerosculpt/plans.py`; the pricing page and the
 enforcement both read from there.
+
+## Shape features
+
+Uploads (and the rocket template) take a timeline of shape features (`geometry/features.py`): nose
+and tail cones, fairings over exposed parts (the convex hull of what is inside a box, drawn into a
+nose and tail), pods, NACA wings, fin sets, slant cuts (plane cut with a flat cap), wing-panel
+edits (span, chord, thickness, sweep, dihedral on an uploaded wing) and region move/scale/turn.
+Added parts are extra closed shells: the tunnel fills their union, and faces buried inside another
+shell are marked hidden so they are neither wetted area nor surface pressure. Each dimension has a
+lock and an optimizer range; free ones become search variables (`optimize/spaces.FeatureSpace`).
 
 ## How it works
 

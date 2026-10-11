@@ -230,3 +230,133 @@ def values_to_unit(space, keys, values):
         v = next(v for v in space.vars if v.key == k)
         out.append((values[k] - v.lo) / max(v.hi - v.lo, 1e-12))
     return np.array(out)
+
+
+class FeatureSpace:
+    """Shape features (geometry/features.py) applied on top of another space's candidates. Free
+    feature dimensions join the search as variables "F.<feature id>.<param>"; locked ones keep
+    their values. Feature anchors stay where they were placed while the base shape changes."""
+
+    def __init__(self, inner, features, frame, constraints):
+        from ..geometry import features as FT
+        self.FT = FT
+        self.inner = inner
+        self.features = [f for f in features if f.get("enabled", True)]
+        self.frame = frame
+        self.c = constraints
+        self.dfm = getattr(inner, "dfm", None)
+        self.fvars = []
+        for f in self.features:
+            for p in FT.get(f["type"])["params"]:
+                if FT.locked(p, f) or not T.active(p, f["values"]):
+                    continue
+                key, label, base = f"F.{f['id']}.{p.key}", f"{f['name']} · {p.label}", f["values"][p.key]
+                if p.kind == "choice":
+                    self.fvars.append(Var(key, label, "choice", 0, 0, base, [c[0] for c in p.choices], "features"))
+                    continue
+                lo, hi = FT.bounds(p, f)
+                lo, hi = min(lo, base), max(hi, base)
+                if hi - lo > 1e-12:
+                    self.fvars.append(Var(key, label, p.unit, lo, hi, float(base), None, "features"))
+        self.vars = list(inner.vars) + self.fvars
+        self.base_values = {**getattr(inner, "base_values", {}), **{v.key: v.base for v in self.fvars}}
+        self.base = self.build({})
+        self.base_union = FT.union_volume(self.base.mesh)
+        self.base_planform = projected_area(self.base.mesh, 2)
+        self.base_check = checks.check(self.base.mesh)
+
+    @staticmethod
+    def split(values):
+        inner, over = {}, {}
+        for k, v in (values or {}).items():
+            if k.startswith("F."):
+                _, fid, key = k.split(".", 2)
+                over[(fid, key)] = v
+            else:
+                inner[k] = v
+        return inner, over
+
+    def build(self, values, preview=False) -> Candidate:
+        inner_vals, over = self.split(values)
+        ic = self.inner.build(inner_vals, preview=preview)
+        mesh, probs, info = self.FT.apply(ic.mesh, self.features, self.frame, over)
+        vals = dict(ic.values)
+        vals.update({v.key: v.base for v in self.fvars})
+        vals.update({f"F.{fid}.{k}": v for (fid, k), v in over.items()})
+        out = dict(ic.info)
+        out.update(info)
+        cand = Candidate(vals, mesh, None, ic.wing, out, ic.reason or ("; ".join(probs) if probs else None))
+        cand.inner = ic
+        return cand
+
+    def fast_check(self, cand: Candidate):
+        if cand.reason:
+            return cand.reason
+        c, info = self.c, cand.info
+        for k, lim in (("overall_length", "max_length"), ("overall_width", "max_width"), ("overall_height", "max_height")):
+            if c.get(lim) and info.get(k, 0) > c[lim] * (1 + 1e-9):
+                return f"{k.split('_')[1]} over the {c[lim]:g} m limit"
+        if c.get("hold_wing_area"):
+            pa = projected_area(cand.mesh, 2)
+            if pa < self.base_planform * (1 - c.get("wing_area_tol", 0.01)):
+                return f"planform (wing) area would shrink by {1 - pa / self.base_planform:.1%}"
+        return None
+
+    def full_check(self, cand: Candidate):
+        r = self.fast_check(cand)
+        if r:
+            return r
+        r = self.inner.full_check(cand.inner)
+        if r:
+            return r
+        if self.base_union > 0 and (self.c.get("min_volume") or self.c.get("max_volume")):
+            ratio = self.FT.union_volume(cand.mesh) / self.base_union
+            if not (self.c.get("min_volume", 0.0) - 1e-9 <= ratio <= self.c.get("max_volume", 1e9) + 1e-9):
+                return f"volume {ratio:.0%} of the original is outside the allowed range"
+        if self.base_check is None:
+            bad = checks.check(cand.mesh)
+            if bad:
+                return bad
+        return None
+
+    def rebase(self, values):
+        if not hasattr(self.inner, "rebase"):
+            return []
+        new = self.inner.rebase(self.split(values)[0])
+        self.vars = list(self.inner.vars) + self.fvars
+        return new
+
+    def label(self, key):
+        for v in self.vars:
+            if v.key == key:
+                return v.label
+        return key
+
+    def changes(self, best: Candidate):
+        """Feature dimensions the optimizer was free to change: original and optimized values."""
+        return [{"key": v.key, "label": v.label, "unit": v.unit, "base": v.base, "best": best.values.get(v.key, v.base)}
+                for v in self.fvars]
+
+
+class FixedSpace:
+    """No base variables: the model as uploaded (features may still have free dimensions)."""
+
+    def __init__(self, body: Mesh):
+        self.vars = []
+        self.base_values = {}
+        self.body = body
+        self.base = self.build({})
+
+    def build(self, values, preview=False) -> Candidate:
+        lo, hi = self.body.bbox()
+        return Candidate({}, self.body, None, None, {"overall_length": float(hi[0] - lo[0]), "overall_width": float(hi[1] - lo[1]),
+                                                      "overall_height": float(hi[2] - lo[2])}, None)
+
+    def fast_check(self, cand):
+        return None
+
+    def full_check(self, cand):
+        return None
+
+    def label(self, key):
+        return key

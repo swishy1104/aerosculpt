@@ -116,6 +116,25 @@
     larger than what nose or tail changes achieve. The optimizer then reports no reliable improvement rather than a number made of noise; raise the fidelity,
     or optimize noses in the Supersonic tunnel.</p>
 
+  <h2 id="features">Shape features</h2>
+  <p>Shape features edit any model the way a CAD timeline does: a list of named operations applied in order, each with its own dimensions.
+    Open <b>Shape features</b> in the workspace and pick one; features you place with a click start sized to the model where you clicked.</p>
+  <table class="tbl"><thead><tr><th>Feature</th><th>What it does</th></tr></thead><tbody>
+    <tr><td>Nose cone</td><td>A new nose (conical, ogive, elliptical, power-law or von Kármán) on the front of the body; on a pointed nose it starts at the shoulder and covers the old one.</td></tr>
+    <tr><td>Tail cone</td><td>A boat-tail or cone from the body's rear section, smooth or conical, to any end diameter.</td></tr>
+    <tr><td>Fairing over a part</td><td>Encloses everything inside its box (a motor, a camera, bolt heads, landing gear) in one streamlined shell with a nose and tail you can lengthen.</td></tr>
+    <tr><td>Pod / nacelle</td><td>A body of revolution: payload pod, motor nacelle, tank or sensor pod.</td></tr>
+    <tr><td>Wing / tail surface</td><td>A NACA 4- or 5-digit lifting surface from its root leading edge: span, chords, sweep, dihedral, twist and incidence. One side and a 90° roll makes a fin.</td></tr>
+    <tr><td>Fin set</td><td>2–6 flat fins around the body axis.</td></tr>
+    <tr><td>Slant cut</td><td>Cuts the body along a plane and closes it flat: an upswept tail, a chamfered nose, a wedge. The cut starts square to the surface where you click; tilt, heading and depth set it.</td></tr>
+    <tr><td>Adjust a wing</td><td>Reshapes a wing that is part of your upload: span, chord, thickness, sweep and dihedral, with the root kept attached to the fuselage.</td></tr>
+    <tr><td>Move / scale a part</td><td>Moves, scales or turns whatever lies inside its box, fading the change into the surrounding surface.</td></tr>
+  </tbody></table>
+  <p>Drag a feature's box or marker in the 3D view with the same Move, Turn and Resize tools as protected regions. Each dimension has a lock and an optimizer range:
+    unlock one (a fairing's tail length, a cut's depth, a wing's span) and the optimizer screens and searches it with everything else. Added parts merge with the body in
+    the tunnel, and surfaces buried inside another part never count as wetted area. Every result is checked to be watertight and free of self-intersections before it is simulated.
+    The UAV and wing templates use the wing model rather than the CFD, so shape features are not available on them.</p>
+
   <h2 id="templates">Templates: named dimensions</h2>
   <p>Instead of uploading a mesh you can start from a <b>rocket</b>, <b>fixed-wing UAV</b> or <b>wing</b> template on the Projects page. Every dimension
     is a parameter with a unit, a slider, a number box, an optimizer range and a lock; moving one rebuilds the geometry in milliseconds without

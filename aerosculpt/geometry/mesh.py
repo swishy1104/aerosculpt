@@ -25,6 +25,7 @@ class Mesh:
     def __init__(self, vertices, faces):
         self.v = np.ascontiguousarray(vertices, dtype=np.float64)
         self.f = np.ascontiguousarray(faces, dtype=np.int64)
+        self.hidden = None      # per face: buried inside another closed shell (geometry/features.py)
         if self.v.ndim != 2 or self.v.shape[1] != 3 or self.f.ndim != 2 or self.f.shape[1] != 3:
             raise MeshError("mesh arrays have the wrong shape")
 
@@ -52,7 +53,9 @@ class Mesh:
         return cls(v, f)
 
     def copy(self):
-        return Mesh(self.v.copy(), self.f.copy())
+        m = Mesh(self.v.copy(), self.f.copy())
+        m.hidden = None if self.hidden is None else self.hidden.copy()
+        return m
 
     # ---- basic quantities ----------------------------------------------------
     def triangles(self):
@@ -115,7 +118,9 @@ class Mesh:
             v = v @ np.asarray(R).T
         if t is not None:
             v = v + np.asarray(t)
-        return Mesh(v, self.f.copy())
+        m = Mesh(v, self.f.copy())
+        m.hidden = self.hidden
+        return m
 
     def scaled(self, units):
         if units not in UNIT_SCALE:

@@ -378,3 +378,30 @@ def test_guest_demo(client, monkeypatch):
     assert purge_guests() == 0
     assert purge_guests(now=time.time() + settings.guest_hours * 3600 + 60) >= 1
     assert client.get("/api/me").status_code == 401
+
+
+def test_shape_features_api(client):
+    client.post("/api/auth/logout", headers=H)
+    signup(client, "features@example.com")
+    cat = client.get("/api/plans").json()
+    assert {"nosecone", "fairing", "slant", "wingpanel"} <= set(cat["features"])
+    assert client.get("/api/me").json()["limits"]["max_features"] == 4
+    p = client.post("/api/projects", json={"sample": "rocket"}, headers=H).json()
+    pid = p["id"]
+    r = client.post(f"/api/projects/{pid}/features/suggest", json={"type": "tailcone"}, headers=H)
+    assert r.status_code == 200, r.text
+    tail = r.json()
+    assert tail["values"]["diameter"] > 0 and tail["values"]["length"] > 0
+    r = client.post(f"/api/projects/{pid}/features/build", json={"features": [tail]}, headers=H)
+    assert r.status_code == 200 and r.json()["faces"] > 0 and r.json()["problems"] == []
+    assert client.post(f"/api/projects/{pid}/features/suggest", json={"type": "nope"}, headers=H).status_code == 400
+    r = client.patch(f"/api/projects/{pid}", json={"settings": {"features": [tail]}}, headers=H)
+    assert r.status_code == 200 and r.json()["settings"]["features"][0]["id"] == tail["id"]
+    bad = dict(tail, values={**tail["values"], "length": "x"})
+    assert client.patch(f"/api/projects/{pid}", json={"settings": {"features": [bad]}}, headers=H).status_code == 400
+    # a job carries the features; with a free feature dimension no design aspect is needed
+    base = {"units": "m", "forward": "-x", "up": "+z"}
+    r = client.post(f"/api/projects/{pid}/jobs", json={**base, "kind": "optimize", "fidelity": "draft",
+                    "optimize": {"aspects": [], "iterations": 4, "top_k": 2}}, headers=H)
+    assert r.status_code == 201, r.text
+    assert r.json()["spec"]["features"][0]["type"] == "tailcone"

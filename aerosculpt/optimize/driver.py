@@ -27,7 +27,7 @@ from ..aero.wing import STALL_MARGIN, WingModel
 from ..cfd.analysis import FIDELITY
 from ..geometry.ffd import ASPECTS, Deformer, design_space, refine
 from .runner import OBJECTIVES, objective, polar_summary, wind_rotation
-from .spaces import DeformSpace, TemplateSpace
+from .spaces import DeformSpace, FeatureSpace, FixedSpace, TemplateSpace
 from .strategy import Search
 
 from ..plans import EXPLORE_FID
@@ -166,7 +166,8 @@ def optimize(r):
     constraints = constraints_from(o)
     budget = int(o.get("iterations", 12))
     top_k = int(o.get("top_k", 4))
-    body = r.frame.body
+    features = getattr(r, "features", None) or []
+    body = getattr(r, "base_body", r.frame.body)
     aspects = []
     if tmpl:
         space = TemplateSpace(tmpl["id"], tmpl.get("values", {}), o.get("params"), r.frame.center, constraints, r.zones)
@@ -175,17 +176,29 @@ def optimize(r):
         mode = "parameters"
     else:
         aspects = [a for a in o.get("aspects", ["nose", "tail"]) if a in ASPECTS]
-        if not aspects:
+        if not aspects and not features:
             raise ValueError("choose at least one design aspect to modify")
-        if "fairing" in aspects:
-            lo, hi = body.bbox()
-            body = refine(body, max_edge=float((hi - lo).max()) / 45.0)
-            r.frame.body = body
-        dfm = Deformer(body, design_space(aspects, float(o.get("max_change", 0.25))), r.zones)
-        space = DeformSpace(dfm, constraints)
+        if aspects:
+            if "fairing" in aspects:
+                lo, hi = body.bbox()
+                body = refine(body, max_edge=float((hi - lo).max()) / 45.0)
+                if not features:
+                    r.frame.body = body
+            dfm = Deformer(body, design_space(aspects, float(o.get("max_change", 0.25))), r.zones)
+            space = DeformSpace(dfm, constraints)
+            mode = "aspects"
+        else:
+            space = FixedSpace(body)
+            mode = "features"
         winged = False
         can_mirror = "camber" not in aspects
-        mode = "aspects"
+    if features:
+        if winged:
+            raise ValueError("shape features need the CFD tunnel; the UAV and wing templates use the wing model")
+        space = FeatureSpace(space, features, r.feature_frame(), constraints)
+        can_mirror = can_mirror and all(f["type"] != "wing" or f["values"].get("sides") != "single" for f in features)
+        if not space.vars:
+            raise ValueError("nothing to optimize: unlock a shape-feature dimension or choose a design aspect")
     obj_kind = "drag_fixed_lift" if winged else o.get("objective", "drag")
     if obj_kind != "drag" and not winged:
         raise ValueError("this goal is not available for this design")
@@ -357,7 +370,12 @@ def optimize(r):
     if tmpl:
         result["template"] = {"id": tmpl["id"], "base_values": {k: _jsonable(v) for k, v in base_c.values.items()},
                               "best_values": result["best_values"], "info_base": base_c.info, "info_best": best_c.info}
-    if mode == "aspects":
+    if features:
+        result["features"] = {"changes": [{**c, "base": _jsonable(c["base"]), "best": _jsonable(c["best"])} for c in space.changes(best_c)],
+                              "list": [{"id": f["id"], "name": f["name"], "type": f["type"]} for f in space.features]}
+    if features and mode != "aspects":
+        result["volume_ratio"] = space.FT.union_volume(best_c.mesh) / space.base_union if space.base_union else 1.0
+    elif mode == "aspects":
         result["volume_ratio"] = space.dfm.volume_ratio(best_c.mesh)
         result["keep_zones"] = space.dfm.keep.report() if space.dfm.keep is not None else []
     else:

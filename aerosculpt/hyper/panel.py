@@ -233,6 +233,8 @@ class Surface:
         cr = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
         nrm = np.linalg.norm(cr, axis=1)
         keep = nrm > 1e-18
+        if getattr(mesh, "hidden", None) is not None:    # buried inside another shell (shape features)
+            keep = keep & ~mesh.hidden
         self.mesh = mesh
         self.valid = keep
         self.area = 0.5 * nrm

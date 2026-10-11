@@ -6,6 +6,7 @@ import { lineChart } from "/static/js/charts.js";
 import { Propellers, rcCharts, rcResultsHTML } from "/static/js/tunnel-rc.js";
 import { HyperPanel, degC, hyperCharts, hyperFaceFields, hyperHistoryHTML, hyperResultsHTML } from "/static/js/tunnel-hyper.js";
 import { DesignParams, fixedLiftHTML, paramsTableHTML, strategyHTML } from "/static/js/design-params.js";
+import { FeatureEditor, featureChangesHTML } from "/static/js/features.js";
 
 let me = await requireAuth();
 const pid = location.pathname.split("/").filter(Boolean).pop();
@@ -65,6 +66,7 @@ let tunnel = TUNNELS[S.tunnel] ? S.tunnel : "general";
 let props = null, hyper = null;          // tunnel panels, created once the helpers below exist
 S.propellers = S.propellers || [];
 let raw = null, frame = null;
+let feats = null, designBody = null;      // shape features and the model with them applied (body frame)
 let watchJob = null, shownJob = null, result = null;
 const fileCache = {};
 let display = "best";
@@ -115,7 +117,7 @@ function displayRotation() {
 
 function showPreview(fit = false) {
   if (!frame) return;
-  viewer.setModel(rotate(frame.body, windRotation(previewAngle(), S.envelope.yaw)), { fit });
+  viewer.setModel(rotate(designBody || frame.body, windRotation(previewAngle(), S.envelope.yaw)), { fit });
   viewer.setMirror(false);
   viewer.setGhost(null);
   viewer.setSlice(null);
@@ -176,7 +178,7 @@ function saveSettings() {
   saveTimer = setTimeout(async () => {
     try {
       project = await api(`/api/projects/${pid}`, { method: "PATCH", body: { settings: {
-        units: S.units, forward: S.forward, up: S.up, envelope: S.envelope, zones: S.zones,
+        units: S.units, forward: S.forward, up: S.up, envelope: S.envelope, zones: S.zones, features: S.features || [],
         tunnel, propellers: S.propellers, hyper: S.hyper, optimize: opt, fidelity,
         ...(S.template ? { template: { values: S.template.values, params: S.template.params } } : {}) } } });
       if (S.template) {
@@ -301,6 +303,7 @@ function renderZones() {
 }
 
 function renderZones3D() {
+  if (viewer.dragging) return;          // never rebuild the boxes under a gizmo drag (redrawn on release)
   if (!frame || !vis.zones || (showingResults && viewer.root.scale.z < 0)) { viewer.setZones([]); return; }
   const R = displayRotation();
   viewer.setZones(S.zones.filter((z) => !ZONE_TYPES[z.type].only || ZONE_TYPES[z.type].only === tunnel).map((z) => {
@@ -308,8 +311,28 @@ function renderZones3D() {
     let s = frame.sizeToBody(z.size);
     if (z.shape === "cylinder") { const r = Math.max(s[1], s[2]); s = [s[0], r, r]; }
     return { id: z.id, shape: z.shape, color: cssVar(ZONE_TYPES[z.type].color), selected: z.id === selectedZone, matrix: zoneMatrix(c, s, R, z.rotation) };
-  }));
+  }).concat(featureMarkers(R)));
   syncZoneTool();
+}
+
+// shape features in the 3D view: the box a region feature acts on, a small cube at a point feature's anchor,
+// a thin plate showing a slant's cut plane (its outward side is the part removed)
+function featureMarkers(R) {
+  if (!S.features || !catalog.features) return [];
+  const L = Math.max(...frame.size) || 1;
+  return S.features.filter((f) => f.enabled !== false && (f.size || f.id === selectedZone)).map((f) => {
+    const c = frame.fileToBody(f.center);
+    let s, rot = f.rotation;
+    if (f.size) s = frame.sizeToBody(f.size);
+    else if (f.type === "slant") {
+      s = [L * 0.004, L * 0.3, L * 0.3];
+      const n = [Math.cos((f.values.elevation * Math.PI) / 180) * Math.cos((f.values.azimuth * Math.PI) / 180),
+        Math.cos((f.values.elevation * Math.PI) / 180) * Math.sin((f.values.azimuth * Math.PI) / 180), Math.sin((f.values.elevation * Math.PI) / 180)];
+      for (let k = 0; k < 3; k++) c[k] -= f.values.depth * n[k];
+      rot = [0, -f.values.elevation, f.values.azimuth];
+    } else s = [L * 0.05, L * 0.05, L * 0.05];
+    return { id: f.id, shape: "box", color: cssVar("--accent"), selected: f.id === selectedZone, matrix: zoneMatrix(c, s, R, rot) };
+  });
 }
 
 // ---- protected regions in 3D: select, move, turn, resize ---------------------------------------------------
@@ -323,15 +346,25 @@ function selectZone(id, mode = zoneTool.mode) {
   zoneTool.mode = id ? mode || "translate" : null;
   renderZones();
   renderZones3D();
-  const card = $("#zones .zone.sel");
+  if (feats && isFeature(findEditable(id))) { feats.open = id; feats.renderList(); }
+  const card = $("#zones .zone.sel") || $(".ft-card.sel");
   if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
+const findEditable = (id) => S.zones.find((q) => q.id === id) || (S.features || []).find((q) => q.id === id);
+const isFeature = (z) => !!(z && catalog.features && catalog.features[z.type]);
 function syncZoneTool() {
-  const z = S.zones.find((q) => q.id === selectedZone);
+  const z = findEditable(selectedZone);
   const bar = $("#zone-tools");
-  const on = !!(z && zoneTool.mode && zoneEditable() && (!ZONE_TYPES[z.type].only || ZONE_TYPES[z.type].only === tunnel));
+  const zt = z && ZONE_TYPES[z.type];
+  const on = !!(z && zoneTool.mode && !picking && zoneEditable() && (!zt || !zt.only || zt.only === tunnel) && z.enabled !== false);
   bar.classList.toggle("hidden", !on);
   if (!on) { viewer.detachZoneTool(); return; }
+  // point features have no box to resize; a slant's angles are its own dimensions
+  const canScale = !isFeature(z) || !!z.size, canTurn = z.type !== "slant";
+  bar.querySelector('[data-tool="scale"]').classList.toggle("hidden", !canScale);
+  bar.querySelector('[data-tool="rotate"]').classList.toggle("hidden", !canTurn);
+  $("#zt-reset").classList.toggle("hidden", !canTurn);
+  if ((zoneTool.mode === "scale" && !canScale) || (zoneTool.mode === "rotate" && !canTurn)) zoneTool.mode = "translate";
   bar.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === zoneTool.mode));
   $("#zt-snap").classList.toggle("on", zoneTool.snap);
   $("#zt-name").textContent = z.name;
@@ -342,6 +375,22 @@ function syncZoneTool() {
 function zoneDragged(z, pose) {
   const R = displayRotation();
   const b = zoneFromPose(pose, R);
+  if (isFeature(z)) {
+    if (z.type === "slant") {          // the plate sits on the cut plane, `depth` behind the anchor
+      const e = (z.values.elevation * Math.PI) / 180, a = (z.values.azimuth * Math.PI) / 180;
+      const n = [Math.cos(e) * Math.cos(a), Math.cos(e) * Math.sin(a), Math.sin(e)];
+      for (let k = 0; k < 3; k++) b.center[k] += z.values.depth * n[k];
+    }
+    z.center = frame.bodyToFile(b.center).map(round);
+    if (z.size) {
+      const fs = [0, 0, 0];
+      for (let k = 0; k < 3; k++) for (let j = 0; j < 3; j++) fs[j] += Math.abs(frame.R0[k][j]) * b.size[k];
+      z.size = fs.map((v) => Math.max(round(v / frame.s), 1e-3));
+    }
+    if (z.type !== "slant") { if (b.rotation.some((a) => Math.abs(a) > 0.05)) z.rotation = b.rotation; else delete z.rotation; }
+    feats.rebuild(false);
+    return;
+  }
   if (z.shape === "cylinder") {     // one radius: follow whichever cross-section handle moved
     const prev = frame.sizeToBody(z.size);
     const r = Math.abs(b.size[1] - Math.max(prev[1], prev[2])) >= Math.abs(b.size[2] - Math.max(prev[1], prev[2])) ? b.size[1] : b.size[2];
@@ -360,32 +409,37 @@ function zoneDragged(z, pose) {
     card.querySelectorAll("input[data-r]").forEach((inp) => { inp.value = (z.rotation || [0, 0, 0])[+inp.dataset.r]; });
   }
 }
-function zoneDragEnd() {
-  saveSettings();
+function zoneDragEnd(z) {
+  if (isFeature(z)) feats.placed(); else saveSettings();
   renderZones3D();
 }
 $("#zone-tools").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  const z = S.zones.find((q) => q.id === selectedZone);
+  const z = findEditable(selectedZone);
   if (b.dataset.tool) zoneTool.mode = b.dataset.tool;
-  else if (b.id === "zt-snap") zoneTool.snap = !zoneTool.snap;
+  else if (b.id === "zt-snap") { setSnap(!zoneTool.snap); return; }
   else if (b.id === "zt-reset" && z) {
     delete z.rotation;
-    renderZones();
-    saveSettings();
+    if (isFeature(z)) feats.placed(); else { renderZones(); saveSettings(); }
   } else if (b.id === "zt-done") zoneTool.mode = null;
   renderZones3D();
 });
 addEventListener("keydown", (e) => {
-  if (!zoneTool.mode || e.target.closest("input,textarea,select") || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!zoneTool.mode || (e.target.closest && e.target.closest("input,textarea,select")) || e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
+  if (viewer.dragging && k !== "shift") return;      // never rebuild the regions under a drag
   const mode = { w: "translate", g: "translate", e: "rotate", r: "scale", s: "scale" }[k];
   if (mode) { zoneTool.mode = mode; renderZones3D(); e.preventDefault(); }
   else if (k === "escape" && !picking) { zoneTool.mode = null; renderZones3D(); }
-  else if (k === "shift") { zoneTool.snap = true; renderZones3D(); }
+  else if (k === "shift" && !zoneTool.snap) setSnap(true);
 });
-addEventListener("keyup", (e) => { if (e.key === "Shift" && zoneTool.mode && zoneTool.snap) { zoneTool.snap = false; renderZones3D(); } });
+addEventListener("keyup", (e) => { if (e.key === "Shift" && zoneTool.mode && zoneTool.snap) setSnap(false); });
+function setSnap(on) {
+  zoneTool.snap = on;
+  viewer.setZoneSnap(on);
+  $("#zt-snap").classList.toggle("on", on);
+}
 
 function startPick(id, kind = "zone") {
   picking = { id, kind };
@@ -394,11 +448,24 @@ function startPick(id, kind = "zone") {
     : "Click the model where this region should go · Esc to cancel";
   $("#pick-hint").classList.remove("hidden");
   $(`[data-sec="${kind === "prop" ? "props" : "protect"}"]`).classList.remove("closed");
+  syncZoneTool();
+}
+function pickForFeature(type, hint) {
+  return new Promise((resolve) => {
+    if (picking && picking.resolve) picking.resolve(null);
+    picking = { kind: "feature", resolve };
+    $("#vp").classList.add("picking");
+    $("#pick-hint").textContent = `${hint} · Esc to cancel`;
+    $("#pick-hint").classList.remove("hidden");
+    syncZoneTool();
+  });
 }
 function stopPick() {
+  if (picking && picking.resolve) picking.resolve(null);
   picking = null;
   $("#vp").classList.remove("picking");
   $("#pick-hint").classList.add("hidden");
+  syncZoneTool();
 }
 addEventListener("keydown", (e) => { if (e.key === "Escape" && picking) stopPick(); });
 let downAt = null;
@@ -407,7 +474,7 @@ viewer.renderer.domElement.addEventListener("pointerup", (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || viewer.dragging || viewer.overGizmo) return;  // a drag orbits
   if (!picking) {
     const id = zoneEditable() ? viewer.pickZone(e.clientX, e.clientY) : null;
-    if (id && id !== selectedZone) {
+    if (id && (id !== selectedZone || !zoneTool.mode)) {
       $(`[data-sec="protect"]`).classList.remove("closed");
       selectZone(id, zoneTool.mode || "translate");
     }
@@ -417,6 +484,14 @@ viewer.renderer.domElement.addEventListener("pointerup", (e) => {
   if (!p) return toast("Click on the model surface.");
   const R = displayRotation();
   const body = applyMat3(transposeMat3(R), [p.x, p.y, p.z]);
+  if (picking.kind === "feature") {
+    const nrm = p.normal ? applyMat3(transposeMat3(R), [p.normal.x, p.normal.y, p.normal.z]) : null;
+    const done = picking.resolve;
+    picking.resolve = null;
+    stopPick();
+    done({ point: frame.bodyToFile(body), normal: nrm });
+    return;
+  }
   if (picking.kind === "prop") {
     const pr = props.placeAt(picking.id, body);
     if (pr) { props.render3D(R, true); toast(`${pr.name} placed. Set its size and rpm on the left.`, "good"); }
@@ -691,7 +766,8 @@ function estimates() {
   $("#run-analyze").innerHTML = withProps ? `${icon("fan")}Run RC tunnel` : `${icon("wind")}Simulate envelope`;
   $("#analyze-est").innerHTML = `${perDesign} CFD run${perDesign > 1 ? "s" : ""} · ≈ ${fmtDuration(time(perDesign, fidelity))} · up to ${perDesign * per} credit${perDesign * per > 1 ? "s" : ""} · ${fmtInt(me.credits_left)} left`;
   const xf = catalog.explore_fidelity[fidelity] || "coarse";
-  const nScreen = S.template && dparams ? dparams.unlocked().reduce((n, p) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) : opt.aspects.length * 1.5;
+  const nFeat = feats ? feats.freeParams().reduce((n, [, p]) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) : 0;
+  const nScreen = nFeat + (S.template && dparams ? dparams.unlocked().reduce((n, p) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) : opt.aspects.length * 1.5);
   const nA = Math.min(3, aoas.length);
   const perX = withProps ? nA * speeds.length : nA * reGroups().n;
   const exploreCfd = !winged();
@@ -743,15 +819,16 @@ $$(".sec-h").forEach((hd) => hd.addEventListener("click", () => hd.parentElement
 
 // ---- jobs ---------------------------------------------------------------------------------------------------
 function jobSpec(kind) {
-  const spec = { kind, tunnel, units: S.units, forward: S.forward, up: S.up, zones: S.zones };
+  const spec = { kind, tunnel, units: S.units, forward: S.forward, up: S.up, zones: S.zones, features: S.features || [] };
   if (tunnel === "supersonic") spec.hyper = S.hyper;
   else Object.assign(spec, { fidelity, envelope: S.envelope, propellers: S.propellers });
   if (kind === "optimize") spec.optimize = { ...opt };
   return spec;
 }
 async function submit(kind, btn) {
-  if (kind === "optimize" && !S.template && !opt.aspects.length) return toast("Choose at least one aspect the optimizer may change.", "bad");
-  if (kind === "optimize" && S.template && dparams && !dparams.unlocked().length) return toast("Unlock at least one design parameter for the optimizer.", "bad");
+  const freeFeat = feats ? feats.freeParams().length : 0;
+  if (kind === "optimize" && !S.template && !opt.aspects.length && !freeFeat) return toast("Choose at least one aspect the optimizer may change, or unlock a shape-feature dimension.", "bad");
+  if (kind === "optimize" && S.template && dparams && !dparams.unlocked().length && !freeFeat) return toast("Unlock at least one design parameter for the optimizer.", "bad");
   busy(btn, true, kind === "optimize" ? "Queuing optimization…" : "Queuing…");
   try {
     clearTimeout(saveTimer);
@@ -1222,7 +1299,7 @@ function renderResults() {
   const box = $("#tab-results");
   if (!result) return emptyResults();
   if (isHyper()) {
-    box.innerHTML = hyperResultsHTML(result, cond, display, shownJob.id);
+    box.innerHTML = hyperResultsHTML(result, cond, display, shownJob.id) + featureChangesHTML(result, catalog);
     const go = $("#go-opt");
     if (go) go.addEventListener("click", () => { $('[data-sec="optimize"]').classList.remove("closed"); $("#run-optimize").scrollIntoView({ behavior: "smooth" }); });
     hyperCharts(chartCard($("#charts")), result, cond, display);
@@ -1412,7 +1489,8 @@ function renderHistoryTab() {
   box.innerHTML = `${head}
     ${r.zones && r.zones.length ? `<p class="small" style="margin:10px 0 0">${icon("shieldlock", "i sm")} Respected ${r.zones.length} region${r.zones.length > 1 ? "s" : ""}: ${r.zones.map((z) => esc(z.name)).join(", ")}.</p>` : ""}
     ${r.template ? paramsTableHTML(r, catalog) : `<div class="section-title">Best design</div>
-    <div class="kv">${r.variables.map((v) => `<span class="k">${esc(v.label)}</span><span class="v">${v.key === "fairing" ? fmtPct(r.best_values[v.key], 0) : fmtPct(r.best_values[v.key], 1, true)}</span>`).join("")}</div>`}
+    <div class="kv">${r.variables.filter((v) => !v.key.startsWith("F.")).map((v) => `<span class="k">${esc(v.label)}</span><span class="v">${v.key === "fairing" ? fmtPct(r.best_values[v.key], 0) : fmtPct(r.best_values[v.key], 1, true)}</span>`).join("")}</div>`}
+    ${featureChangesHTML(r, catalog)}
     ${strategyHTML(r)}
     ${r.relevance && !st ? `<div class="section-title">What mattered</div><div>${Object.entries(r.relevance).sort((a, c) => c[1] - a[1]).map(([k, rel]) => {
       const v = r.variables.find((x) => x.key === k);
@@ -1564,6 +1642,24 @@ if (S.template) {
   dparams.render($("#params-box"));
 }
 
+// ---- shape features -------------------------------------------------------------------------------------------------------
+feats = new FeatureEditor({
+  S, catalog, me, pid,
+  pick: (type, hint) => pickForFeature(type, hint),
+  onGeometry: (pos) => {
+    designBody = pos;
+    showPreview(false);
+    $("#s-features").textContent = (S.features || []).length ? `${S.features.filter((f) => f.enabled !== false).length} on` : "none";
+  },
+  save: () => saveSettings(),
+  changed: () => { renderOptMode(); estimates(); renderZones3D(); },
+  select: (id, tool) => selectZone(id, tool ? zoneTool.mode || "translate" : zoneTool.mode),
+  selected: () => selectedZone,
+});
+feats.render($("#features-box"));
+$("#s-features").textContent = (S.features || []).length ? `${S.features.filter((f) => f.enabled !== false).length} on` : "none";
+if (S.template && (S.template.id === "uav" || S.template.id === "wing")) $('[data-sec="features"]').classList.add("hidden");
+
 // ---- boot ----------------------------------------------------------------------------------------------------------------
 applyTunnel(tunnel);
 renderZoneButtons();
@@ -1575,6 +1671,7 @@ emptyResults();
 renderHistoryTab();
 try {
   await loadModel();
+  if ((S.features || []).some((f) => f.enabled !== false)) feats.rebuild(false);
 } catch (e) {
   $("#vp-empty").innerHTML = `${icon("alert")}<span>${esc(e.message)}</span>`;
 }
