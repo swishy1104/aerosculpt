@@ -30,7 +30,7 @@ def test_every_feature_builds_a_valid_union(ftype, where):
 
 def test_feature_values_are_cleaned_and_locked_by_default():
     f = FT.clean({"type": "tailcone", "center": [0, 0, 0], "values": {"length": -5, "shape": "bogus"}})
-    assert f["values"]["length"] == FT.get("tailcone")["params"][1].lo and f["values"]["shape"] == "smooth"
+    assert f["values"]["length"] == next(p for p in FT.get("tailcone")["params"] if p.key == "length").lo and f["values"]["shape"] == "smooth"
     free = {p.key for p in FT.get("tailcone")["params"] if not FT.locked(p, f)}
     assert free == {"length", "end_ratio"}
     with pytest.raises(ValueError):
@@ -84,3 +84,89 @@ def test_feature_space_exposes_free_dimensions():
     assert c_hi.info["overall_length"] > c_lo.info["overall_length"]
     assert sp.full_check(c_hi) is None
     assert [c["key"] for c in sp.changes(c_hi)] == keys
+
+
+def test_solidify_closes_a_leaky_visual_mesh():
+    from aerosculpt.geometry.repair import solidify
+    # a box made of six separate, unconnected panels with gaps between them: open, 6 pieces
+    b = box((1.0, 0.6, 0.4), 2)
+    tri = b.triangles()
+    n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    n /= np.linalg.norm(n, axis=1)[:, None]
+    from aerosculpt.geometry.mesh import Mesh
+    panels = (tri * 0.98).reshape(-1, 3)                 # shrink: the panels no longer touch
+    leaky = Mesh(panels, np.arange(len(panels)).reshape(-1, 3))
+    assert checks.check(leaky) is not None
+    solid, info = solidify(leaky, cells=80, gap=2)
+    assert checks.check(solid) is None and solid.components().max() == 0
+    assert solid.signed_volume() == pytest.approx(0.98 ** 3 * 0.24, rel=0.15)
+
+
+def test_generative_proposals_are_optional_and_valid():
+    m = centred("rocket")
+    props = FT.propose(m, FR)
+    names = [f["name"] for f in props]
+    assert "Boat-tail (proposed)" in names and all(f["optional"] for f in props)
+    for f in props:
+        out, problems, _ = FT.apply(m, [f], FR)
+        assert problems == [] and checks.check(out) is None
+
+
+def test_feature_space_screens_optional_features_off_first():
+    from aerosculpt.optimize.spaces import FeatureSpace, FixedSpace
+    m = centred("rocket")
+    bt = FT.idea("boat_tail", m, FR)
+    sp = FeatureSpace(FixedSpace(m), [bt], FR, {})
+    assert [v.key for v in sp.vars] == [f"F.{bt['id']}._use"]           # dimensions join once it is added
+    assert sp.base.mesh.n_faces == m.n_faces                             # the baseline is the original
+    on = sp.build({f"F.{bt['id']}._use": "on"})
+    assert on.mesh.n_faces > m.n_faces
+    new = sp.rebase(on.values)
+    assert {v.key for v in new} == {f"F.{bt['id']}.length", f"F.{bt['id']}.end_ratio"}
+
+
+def test_ai_assistant_reply_is_validated(monkeypatch):
+    from aerosculpt import ai
+    from aerosculpt.config import settings
+    monkeypatch.setattr(settings, "ai_base_url", "http://127.0.0.1:11434/v1")
+    monkeypatch.setattr(settings, "ai_model", "test-model")
+    sent = {}
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": 'Sure! ```json {"ideas": [{"idea": "boat_tail", "why": "blunt base",'
+                                                        ' "hints": {"length": 0.9, "bogus": 3}}, {"idea": "warp_drive"}],'
+                                                        ' "notes": "try the tail"} ```'}}]}
+
+    def post(url, json, headers, timeout):
+        sent.update(url=url, body=json)
+        return R()
+
+    out = ai.ask("less drag", {"length_m": 1.2}, None, post=post)
+    assert sent["url"].endswith("/v1/chat/completions") and sent["body"]["model"] == "test-model"
+    assert out["ideas"] == [{"idea": "boat_tail", "why": "blunt base", "hints": {"length": 0.9}}]
+    f = FT.idea("boat_tail", centred("rocket"), FR, out["ideas"][0]["hints"])
+    assert f["optional"] and f["values"]["section"] == "match"
+
+
+def test_search_adopts_an_idea_then_tunes_its_dimensions():
+    from aerosculpt.optimize.spaces import FeatureSpace, FixedSpace
+    from aerosculpt.optimize.strategy import Search
+    m = centred("rocket")
+    bt = FT.idea("boat_tail", m, FR)
+    slant = FT.idea("rear_slant", m, FR)
+    sp = FeatureSpace(FixedSpace(m), [bt, slant], FR, {})
+    L0 = m.bbox()[1][0]
+
+    def evaluate(cand, label):     # a stand-in objective: the boat-tail helps, more length helps a little
+        tail = cand.values.get(f"F.{bt['id']}._use") == "on"
+        extra = cand.mesh.bbox()[1][0] - L0
+        return {"J": 1.0 - (0.1 if tail else 0.0) - 0.05 * extra, "converged": True}
+
+    s = Search(sp, evaluate, budget=14, top_k=2, n_confirm=0, eps_floor=0.01, noise=None, confirm=None, seed=3)
+    s.run()
+    assert [a["key"] for a in s.adopted_all] == [f"F.{bt['id']}._use"]
+    assert s.best["cand"].values[f"F.{bt['id']}._use"] == "on" and s.best["J"] < 0.9
+    assert s.best["cand"].values[f"F.{slant['id']}._use"] == "off"

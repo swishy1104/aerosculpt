@@ -135,6 +135,25 @@
     the tunnel, and surfaces buried inside another part never count as wetted area. Every result is checked to be watertight and free of self-intersections before it is simulated.
     The UAV and wing templates use the wing model rather than the CFD, so shape features are not available on them.</p>
 
+  <h3 id="generative">Generative design ideas</h3>
+  <p><b>Generate design ideas</b> proposes new geometry for the body you uploaded: a boat-tail that continues the body's own rear section and
+    tapers it, a rounded front when the front is blunt, and rear slant and diffuser angles. Each idea is <i>optional</i>: the optimizer first
+    measures the original, then the design with each idea added, keeps every idea that beats the solver's measured error (adding them one at a
+    time), and only then searches the kept ideas' dimensions. When nothing clears the error, the result still shows the <b>most promising design</b>,
+    labelled unconfirmed, so you can look at it, download it and check it at higher fidelity.</p>
+  <p>Ideas are judged by <b>paired comparisons</b>: each one is simulated at its normal position and shifted by part of a grid cell, against the
+    original at the same shift. Moving the whole body moves both drags together, so the error that matters is how well those two comparisons
+    agree. When a body is under about 12 cells across on the exploration grid, exploration moves to the grid you chose (on a GPU).</p>
+  <p>An optional <b>AI design assistant</b> can choose and size the ideas from a sentence you write. It uses any OpenAI-compatible model — a free
+    one running on the server with Ollama, or a hosted free tier — set by <code>AI_BASE_URL</code>, <code>AI_MODEL</code> and <code>AI_API_KEY</code>.
+    It never writes geometry: its choices are built by the same code and tested by the same CFD.</p>
+  <h3 id="solid">Visual meshes: make a solid copy</h3>
+  <p>Models made for rendering (cars and aircraft from asset sites, game exports) are open panels with gaps: thousands of pieces, windows as
+    single sheets. Air leaks through them in the tunnel, drag jumps from run to run and no change can be trusted. The Model section flags such
+    files and offers <b>Make a solid copy</b>: the panels are wrapped like shrink film (seams and holes narrower than a few grid cells are closed,
+    the inside is filled) into one watertight body, as a new project with the same settings. If the file's units are unusual, choose
+    <b>Set the real length</b> and type the real overall length.</p>
+
   <h2 id="templates">Templates: named dimensions</h2>
   <p>Instead of uploading a mesh you can start from a <b>rocket</b>, <b>fixed-wing UAV</b> or <b>wing</b> template on the Projects page. Every dimension
     is a parameter with a unit, a slider, a number box, an optimizer range and a lock; moving one rebuilds the geometry in milliseconds without

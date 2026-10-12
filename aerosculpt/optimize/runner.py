@@ -52,8 +52,9 @@ class ModelFrame:
     """Maps between the uploaded file's frame/units and the body frame (metres, nose -x,
     z up, centred) the optimizer works in."""
 
-    def __init__(self, raw: Mesh, units: str, forward: str, up: str):
-        self.scale = UNIT_SCALE[units]
+    def __init__(self, raw: Mesh, units: str, forward: str, up: str, scale=None):
+        # "custom": a scale model or odd units, sized from its real length (metres per file unit)
+        self.scale = float(scale) if units == "custom" and scale else UNIT_SCALE.get(units, 1.0)
         self.units = units
         _, R0 = body_to_wind(forward, up)
         self.R0 = R0
@@ -271,7 +272,7 @@ class Runner:
         spec = self.spec
         m = spec.get("model", {})
         raw = load_model(self.model_path, self.filename)
-        self.frame = ModelFrame(raw, m.get("units", "m"), m.get("forward", "-x"), m.get("up", "+z"))
+        self.frame = ModelFrame(raw, m.get("units", "m"), m.get("forward", "-x"), m.get("up", "+z"), m.get("scale"))
         env = spec.get("envelope", {})
         self.speeds = sorted(float(v) for v in env.get("speeds", [20.0]))
         self.aoas = sorted(float(a) for a in env.get("aoas", [0.0]))

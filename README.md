@@ -75,7 +75,7 @@ the CPU; a standard-fidelity sphere 10 s against 135 s. Each worker measures its
 and the workspace shows the expected time per run from it.
 
 ```bash
-python -m pytest -q          # 84 tests: geometry, templates, wing model, solver, optimizer, API, billing
+python -m pytest -q          # 88 tests: geometry, templates, wing model, solver, optimizer, API, billing
 python run.py validate       # full validation suite (~4 min on the GPU, ~60 min on the CPU), feeds /validation
 python run.py validate supersonic,rc,wing   # the fast groups (~1 min)
 ```
@@ -124,6 +124,22 @@ edits (span, chord, thickness, sweep, dihedral on an uploaded wing) and region m
 Added parts are extra closed shells: the tunnel fills their union, and faces buried inside another
 shell are marked hidden so they are neither wetted area nor surface pressure. Each dimension has a
 lock and an optimizer range; free ones become search variables (`optimize/spaces.FeatureSpace`).
+
+## Generative design, solid repair and the AI assistant
+
+- `features.propose` / `features.idea`: boat-tail (body section lofted and tapered), rounded front,
+  rear slant, rear diffuser, each optional. `FeatureSpace` gives each a `F.<id>._use` off/on choice
+  (baseline off); `Search` adopts every choice that beats the error, one at a time, then rebases so
+  the adopted ideas' dimensions are screened and searched.
+- Paired screening (`Search(paired=...)`): each screened design also runs at the first sub-cell
+  shift against the shifted baseline; the error is the spread of the two comparisons. Confirmation
+  is paired the same way. Unsteady wakes average until the drag's standard error is under 0.6 %.
+- Bodies thinner than 12 cells on the exploration grid are explored on the chosen grid (GPU only).
+- `geometry/repair.solidify`: surface voxels -> close gaps -> flood the outside -> erode -> marching
+  cubes -> Taubin smoothing; `POST /api/projects/{pid}/solidify` makes a solid copy.
+- `units: "custom"` + `unit_scale` (metres per file unit) for scale models ("Set the real length").
+- `aerosculpt/ai.py`: optional, OpenAI-compatible (`AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`); e.g.
+  Ollama on this PC: `AI_BASE_URL=http://127.0.0.1:11434/v1 AI_MODEL=qwen3:4b`.
 
 ## How it works
 

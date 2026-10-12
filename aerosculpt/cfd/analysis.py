@@ -64,8 +64,9 @@ class Fidelity:
     u_lat: float = 0.08
     passes_per_chunk: float = 1.5
     avg_chunks: int = 4
-    extra_chunks: int = 12
+    extra_chunks: int = 24       # room for unsteady wakes to average down (steady flows stop early)
     tol: float = 0.01
+    se_tol: float = 0.006        # standard error of the time-averaged drag, relative
     internal: bool = False        # used by the optimizer only, never offered as a choice
 
 
@@ -430,7 +431,7 @@ class Evaluator:
         if start_avg_after == 0:
             tun.start_averaging(every=4)
         ok, F, cd_std = converge(tun, stats, self.chunk, min_chunks, max_chunks, fid.avg_chunks,
-                                 fid.tol, a_lat, progress=on_chunk)
+                                 fid.tol, a_lat, progress=on_chunk, avg_from=start_avg_after, se_tol=fid.se_tol)
         if key is not None and (key in self.snapshots or len(self.snapshots) < self.max_snapshots):
             self.snapshots[key] = tun.snapshot()
         u = flow.u_lat

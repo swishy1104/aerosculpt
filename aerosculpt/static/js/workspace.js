@@ -144,6 +144,18 @@ function fillAxis(sel, value) {
 fillAxis($("#forward"), S.forward);
 fillAxis($("#up"), S.up);
 $("#units").value = S.units;
+// the model's extent along its nose axis, in file units (for "set the real length")
+function rawLength() {
+  if (!raw) return 0;
+  const k = "xyz".indexOf(S.forward[1]);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = k; i < raw.length; i += 3) { if (raw[i] < lo) lo = raw[i]; if (raw[i] > hi) hi = raw[i]; }
+  return hi - lo;
+}
+function syncRealLen() {
+  $("#real-len-row").classList.toggle("hidden", S.units !== "custom");
+  if (S.units === "custom" && S.unit_scale && raw && document.activeElement !== $("#real_len")) $("#real_len").value = sig(rawLength() * S.unit_scale, 4);
+}
 const lenStr = (v) => (v >= 1 ? sig(v, 4) + " m" : sig(v * 1000, 4) + " mm");
 
 function modelInfo() {
@@ -167,9 +179,29 @@ function modelInfo() {
       : `<span class="badge warn"><span class="dot"></span>open (${fmtInt(m.open_edges)} edges)</span>`}</span>
     <span class="k" title="Length × span × height">Size</span><span class="v">${lenStr(L[0])} × ${lenStr(L[1])} × ${lenStr(L[2])}</span>`;
   if (Math.max(...L) > 50 || Math.max(...L) < 0.005) {
-    $("#model-kv").insertAdjacentHTML("beforeend", `<span class="k" style="grid-column:1/-1;color:var(--warning-text)">That size looks unusual — check the file units.</span>`);
+    $("#model-kv").insertAdjacentHTML("beforeend", `<span class="k" style="grid-column:1/-1;color:var(--warning-text)">That size looks unusual — check the file units, or choose “Set the real length”.</span>`);
   }
-  $("#s-model").textContent = `${S.units} · nose ${S.forward.toUpperCase()}`;
+  const box = $("#solid-box");
+  if (!m.watertight) {
+    box.innerHTML = `<div class="notice warn" style="margin-top:10px">${icon("alert")}<div><b style="color:var(--text)">This is a visual mesh, not a solid.</b>
+      ${fmtInt(m.shells)} separate pieces with ${fmtInt(m.open_edges)} open edges: air leaks through the gaps in the tunnel, so drag jumps between
+      runs and the optimizer cannot trust any change. Make a watertight copy first — seams and holes are closed and the inside filled.
+      <div class="row" style="margin-top:8px;gap:6px"><button class="btn sm primary" type="button" id="make-solid">${icon("box")}Make a solid copy</button>
+      <button class="btn sm ghost" type="button" id="make-solid-fine" title="Finer, slower, more triangles">Fine detail</button></div></div></div>`;
+    const go = async (detail, btn) => {
+      busy(btn, true);
+      try {
+        const np = await api(`/api/projects/${pid}/solidify`, { method: "POST", body: { detail } });
+        toast(`Solid copy made: ${fmtInt(np.metrics.triangles)} triangles, watertight. Opening it…`, "good");
+        setTimeout(() => { location.href = `/app/project/${np.id}`; }, 700);
+      } catch (e) { handleError(e); busy(btn, false); }
+    };
+    $("#make-solid").addEventListener("click", (e) => go("standard", e.currentTarget));
+    $("#make-solid-fine").addEventListener("click", (e) => go("fine", e.currentTarget));
+  } else box.innerHTML = m.solidified ? `<p class="small muted" style="margin:8px 0 0">${icon("check")} Made solid from ${fmtInt(m.solidified.pieces_before)} pieces
+    (${sig(m.solidified.cell * 1000, 3)} file-unit grid).</p>` : "";
+  $("#s-model").textContent = `${S.units === "custom" ? "real size" : S.units} · nose ${S.forward.toUpperCase()}`;
+  syncRealLen();
 }
 
 let saveTimer;
@@ -178,7 +210,7 @@ function saveSettings() {
   saveTimer = setTimeout(async () => {
     try {
       project = await api(`/api/projects/${pid}`, { method: "PATCH", body: { settings: {
-        units: S.units, forward: S.forward, up: S.up, envelope: S.envelope, zones: S.zones, features: S.features || [],
+        units: S.units, ...(S.units === "custom" ? { unit_scale: S.unit_scale } : {}), forward: S.forward, up: S.up, envelope: S.envelope, zones: S.zones, features: S.features || [],
         tunnel, propellers: S.propellers, hyper: S.hyper, optimize: opt, fidelity,
         ...(S.template ? { template: { values: S.template.values, params: S.template.params } } : {}) } } });
       if (S.template) {
@@ -200,7 +232,24 @@ function onGeomSetting() {
   saveSettings();
   estimates();
 }
-$("#units").addEventListener("change", (e) => { S.units = e.target.value; onGeomSetting(); viewer.view("iso"); });
+$("#units").addEventListener("change", (e) => {
+  if (e.target.value === "custom") {
+    // start from the current size so nothing jumps until a real length is typed
+    S.unit_scale = S.unit_scale || (frame ? frame.s : 1);
+  }
+  S.units = e.target.value;
+  syncRealLen();
+  onGeomSetting();
+  viewer.view("iso");
+  if (S.units === "custom") $("#real_len").focus();
+});
+$("#real_len").addEventListener("change", (e) => {
+  const L = +e.target.value, r = rawLength();
+  if (!(L > 0) || !(r > 0)) return toast("Type the real length in metres.", "bad");
+  S.unit_scale = L / r;
+  onGeomSetting();
+  viewer.view("iso");
+});
 $("#forward").addEventListener("change", (e) => { S.forward = e.target.value; onGeomSetting(); });
 $("#up").addEventListener("change", (e) => { S.up = e.target.value; onGeomSetting(); });
 
@@ -766,18 +815,21 @@ function estimates() {
   $("#run-analyze").innerHTML = withProps ? `${icon("fan")}Run RC tunnel` : `${icon("wind")}Simulate envelope`;
   $("#analyze-est").innerHTML = `${perDesign} CFD run${perDesign > 1 ? "s" : ""} · ≈ ${fmtDuration(time(perDesign, fidelity))} · up to ${perDesign * per} credit${perDesign * per > 1 ? "s" : ""} · ${fmtInt(me.credits_left)} left`;
   const xf = catalog.explore_fidelity[fidelity] || "coarse";
-  const nFeat = feats ? feats.freeParams().reduce((n, [, p]) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) : 0;
+  // optional ideas are screened on/off first (their dimensions join only if one is kept); with CFD every
+  // screened design also runs at a sub-cell shift (paired)
+  const nFeat = feats ? feats.freeParams().filter(([f, p]) => !f.optional || p.key === "_use")
+    .reduce((n, [, p]) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) * (winged() ? 1 : 2) : 0;
   const nScreen = nFeat + (S.template && dparams ? dparams.unlocked().reduce((n, p) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) : opt.aspects.length * 1.5);
   const nA = Math.min(3, aoas.length);
   const perX = withProps ? nA * speeds.length : nA * reGroups().n;
   const exploreCfd = !winged();
   const xRuns = exploreCfd ? perX * (opt.iterations + 3) : 0;
-  const cRuns = winged() ? 0 : 4 * perDesign;
+  const cRuns = winged() ? 0 : 6 * perDesign;      // baseline, its error probe, 2 candidates, each again shifted
   const credits = Math.max(1, Math.ceil(xRuns * (catalog.credits_per_run[xf] || 1) + cRuns * per));
   const secs = (exploreCfd ? xRuns * PER_RUN_S[xf] * 0.6 : opt.iterations * 1.5) + (cRuns ? time(cRuns, fidelity) : 0);
   $("#run-optimize").innerHTML = `${icon("sparkles")}Optimize design`;
   $("#optimize-est").innerHTML = `≈ ${Math.round(nScreen)} screening + up to ${Math.max(0, opt.iterations - Math.round(nScreen))} search designs on ${exploreCfd ? `${xf} CFD (${nA} angle${nA > 1 ? "s" : ""})` : "the wing model"}${
-    cRuns ? ` · 4 confirmation designs at ${FID_LABEL[fidelity].toLowerCase()} fidelity` : " · confirmed at full model resolution"} · ≈ ${fmtDuration(secs)} · up to ${credits} credit${credits > 1 ? "s" : ""}` +
+    cRuns ? ` · 6 confirmation runs at ${FID_LABEL[fidelity].toLowerCase()} fidelity` : " · confirmed at full model resolution"} · ≈ ${fmtDuration(secs)} · up to ${credits} credit${credits > 1 ? "s" : ""}` +
     (opt.iterations < nScreen + 2 ? ` · <span style="color:var(--warning-text)">budget too small for the screening — lock some parameters or raise it</span>` : "") +
     (credits > me.credits_left ? ` · <span style="color:var(--critical-text)">needs more credits</span>` : "");
   renderOptMode();
@@ -819,7 +871,7 @@ $$(".sec-h").forEach((hd) => hd.addEventListener("click", () => hd.parentElement
 
 // ---- jobs ---------------------------------------------------------------------------------------------------
 function jobSpec(kind) {
-  const spec = { kind, tunnel, units: S.units, forward: S.forward, up: S.up, zones: S.zones, features: S.features || [] };
+  const spec = { kind, tunnel, units: S.units, ...(S.units === "custom" ? { unit_scale: S.unit_scale } : {}), forward: S.forward, up: S.up, zones: S.zones, features: S.features || [] };
   if (tunnel === "supersonic") spec.hyper = S.hyper;
   else Object.assign(spec, { fidelity, envelope: S.envelope, propellers: S.propellers });
   if (kind === "optimize") spec.optimize = { ...opt };
@@ -1476,7 +1528,14 @@ function renderHistoryTab() {
       ${st ? ` · ${st.designs_explored} designs explored` : ` · best design #${r.best_index} of ${r.history.length - 1}`}${r.verified ? ` · confirmed at ${esc(r.verified.fidelity)} fidelity` : ""}</div>
     ${noReliable ? `<div class="notice warn" style="margin-bottom:12px">${icon("alert")}<div><b style="color:var(--text)">No reliable improvement.</b> No candidate beat the
       original design by more than the solver's measured error (${fmtPct(st.epsilon, 2)})${st.confirmed ? " once checked at full resolution" : ""}, so the original is kept.
-      Unlock other parameters, widen their ranges, or raise the budget.</div></div>`
+      Unlock other parameters, widen their ranges, or raise the budget.</div></div>
+      ${r.promising ? `<div class="card lead-card" style="margin-bottom:12px"><div class="row" style="gap:8px;align-items:baseline"><b>Most promising design</b>
+        <span class="badge warn">unconfirmed</span><span class="grow"></span><span class="hero-num" style="font-size:22px">${fmtPct(r.promising.change, 1, true)}</span></div>
+        <p class="small muted" style="margin:6px 0 8px">The best design explored, with a drag change smaller than the solver's error (${fmtPct(r.promising.eps, 1)}): a lead
+          to check at higher fidelity, not a proven result.${r.promising.features ? " " + r.promising.features.filter((c) => c.unit === "choice" && c.best !== c.base)
+          .map((c) => esc(c.label)).join(", ") : ""}</p>
+        <div class="row" style="gap:6px"><button class="btn sm" type="button" id="lead-view">${icon("eye")}View in 3D</button>
+        <button class="btn sm ghost" type="button" id="lead-dl">${icon("download")}STL${me.limits.export ? "" : " " + icon("lock", "i sm")}</button></div></div>` : ""}`
       : !good ? `<div class="notice warn" style="margin-bottom:12px">${icon("alert")}<div>No design beat the baseline within the allowed changes. Try more iterations, a larger maximum change, or other aspects.</div></div>` : ""}
     <table class="tbl compact"><thead><tr><th>At ${env.aoas[cond.a]}°, ${env.speeds[cond.v]} m/s</th><th class="r">Baseline</th><th class="r">Optimized</th><th class="r">Change</th></tr></thead><tbody>
       ${row("Drag", b[cond.a].speeds[cond.v].drag_N, o[cond.a].speeds[cond.v].drag_N, fmtForce)}
@@ -1506,6 +1565,22 @@ function renderHistoryTab() {
     if (!me.limits.export) return upgradePrompt("Exporting optimized geometry is part of Pro and Team. Your results stay here either way.");
     location.href = `/api/jobs/${shownJob.id}/files/optimized.stl`;
   });
+  if ($("#lead-view")) {
+    $("#lead-view").addEventListener("click", async () => {
+      try {
+        const body = await getFile(shownJob.id, r.promising.mesh, "stl");
+        const R = displayRotation();
+        viewer.setModel(rotate(body, R), { fit: false });
+        viewer.setGhost(rotate(await getFile(shownJob.id, result.meshes.baseline, "stl"), R));
+        viewer.setMode("shaded");
+        $("#vp-info").textContent = "Most promising design (unconfirmed) · the original is the wireframe";
+      } catch (e) { handleError(e); }
+    });
+    $("#lead-dl").addEventListener("click", () => {
+      if (!me.limits.export) return upgradePrompt("Exporting geometry is part of Pro and Team.");
+      location.href = `/api/jobs/${shownJob.id}/files/promising.stl`;
+    });
+  }
   $("#promote").addEventListener("click", async (e) => {
     busy(e.currentTarget, true);
     try { location.href = `/app/project/${(await api(`/api/jobs/${shownJob.id}/promote`, { method: "POST" })).id}`; }

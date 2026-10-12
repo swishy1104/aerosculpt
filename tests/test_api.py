@@ -123,8 +123,8 @@ def test_full_flow(client):
                     "optimize": {"aspects": ["nose", "tail"], "iterations": 4, "top_k": 2}}, headers=H)
     assert r.status_code == 201, r.text
     job = r.json()
-    # explore on the coarse grid: 2 angles x (4 designs + 3) x 0.4 credits; confirm: 4 designs x 2 angles at draft
-    assert job["status"] == "queued" and job["estimated_credits"] == 14
+    # explore on the coarse grid: 2 angles x (4 designs + 3) x 0.4 credits; confirm: 6 runs x 2 angles at draft
+    assert job["status"] == "queued" and job["estimated_credits"] == 18
     assert job["spec"]["envelope"]["speeds"] == [10.0, 20.0, 30.0] and job["spec"]["envelope"]["aoas"] == [0.0, 4.0]
     assert job["spec"]["zones"][0]["name"] == "mount"
     cat = client.get("/api/plans").json()
@@ -405,3 +405,21 @@ def test_shape_features_api(client):
                     "optimize": {"aspects": [], "iterations": 4, "top_k": 2}}, headers=H)
     assert r.status_code == 201, r.text
     assert r.json()["spec"]["features"][0]["type"] == "tailcone"
+
+
+def test_solid_copy_and_real_length(client):
+    client.post("/api/auth/logout", headers=H)
+    signup(client, "solid@example.com")
+    p = client.post("/api/projects", json={"sample": "sphere"}, headers=H).json()
+    r = client.post(f"/api/projects/{p['id']}/solidify", json={"detail": "standard"}, headers=H)
+    assert r.status_code == 201, r.text
+    q = r.json()
+    assert q["name"].endswith("(solid)") and q["metrics"]["watertight"] and q["metrics"]["shells"] == 1
+    assert q["settings"]["envelope"] == p["settings"]["envelope"]
+    # a scale model sized from its real length
+    r = client.patch(f"/api/projects/{q['id']}", json={"settings": {"units": "custom", "unit_scale": 0.6096}}, headers=H)
+    assert r.status_code == 200 and r.json()["settings"]["unit_scale"] == 0.6096
+    assert client.patch(f"/api/projects/{q['id']}", json={"settings": {"units": "custom", "unit_scale": -1}}, headers=H).status_code == 400
+    r = client.post(f"/api/projects/{q['id']}/features/propose", json={}, headers=H)
+    assert r.status_code == 200 and all(f["optional"] for f in r.json())
+    assert client.post(f"/api/projects/{q['id']}/features/ai", json={}, headers=H).status_code == 404   # assistant off

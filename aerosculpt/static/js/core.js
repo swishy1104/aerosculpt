@@ -195,6 +195,7 @@ export function fmtDuration(s) {
 export const UNIT_SCALE = { mm: 1e-3, cm: 1e-2, m: 1, in: 0.0254, ft: 0.3048 };
 export function fmtLen(m, units = "m") {
   if (!isFinite(m)) return "—";
+  if (!UNIT_SCALE[units]) units = "m";          // custom-scale models are shown in metres
   const v = m / UNIT_SCALE[units];
   return sig(v, 4) + " " + units;
 }

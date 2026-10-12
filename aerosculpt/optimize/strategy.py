@@ -28,7 +28,7 @@ SCREEN_STEP = 0.25
 
 class Search:
     def __init__(self, space, evaluate, *, budget, top_k=4, eps_floor=0.003, patience=None, n_confirm=2,
-                 noise=None, confirm=None, log=None, progress=None, cancel=None, seed=7, label_stage=None):
+                 noise=None, confirm=None, log=None, progress=None, cancel=None, seed=7, label_stage=None, paired=None):
         """evaluate(candidate, label) -> dict with "J" (objective, baseline = 1, lower is better);
         noise() -> list of J for shifted baselines (None: deterministic model);
         confirm(list of candidates incl. baseline first) -> list of dicts with "J"."""
@@ -49,6 +49,13 @@ class Search:
         self.evals = 0
         self.rejected = 0
         self.stage_names = label_stage or {}
+        # paired(cand, label) -> objective of the candidate shifted by part of a cell, against the
+        # baseline shifted the same way. A whole-body shift moves both drags together; a design
+        # change is compared at equal shifts, so its own error is the spread of that difference.
+        self.paired = paired
+        self.pairs = []
+        self.screened_all = []          # every screened design: the most promising lead may be one of them
+        self.promising = None
 
     # ---- bookkeeping ---------------------------------------------------------------------
     def _entry(self, stage, status, cand, res=None, note=None, **extra):
@@ -67,6 +74,19 @@ class Search:
     def _tick(self, stage):
         total = self.budget + 4 + (self.n_confirm + 2 if self.confirm else 0)
         self.progress(min(0.97, 0.02 + 0.95 * self.evals / total), stage, {"history": self.history[-60:]})
+
+    def _effect(self, cand, res, J0, label):
+        """Relative change against the baseline: the mean of the plain and the shifted comparison
+        when paired evaluation is available."""
+        eff = res["J"] / J0 - 1.0
+        if self.paired is None:
+            return eff
+        self.cancel()
+        j1 = self.paired(cand, label + " (shifted)")
+        self.evals += 1
+        e1 = float(j1) - 1.0
+        self.pairs.append((eff, e1))
+        return 0.5 * (eff + e1)
 
     def _eval(self, cand, label):
         self.cancel()
@@ -123,12 +143,11 @@ class Search:
                     ranking.append({"key": v.key, "label": v.label, "choice": ch, "effect": None, "note": why})
                     continue
                 res = self._eval(cand, f"Screening · {v.label}: {ch}")
-                eff = res["J"] / J0 - 1.0
+                eff = self._effect(cand, res, J0, f"Screening · {v.label}: {ch}")
                 self._entry("screen", "screened", cand, res, param=v.key)
+                self.screened_all.append({"J": J0 * (1.0 + eff), "cand": cand, "res": res})
                 ranking.append({"key": v.key, "label": v.label, "choice": ch, "effect": eff, "categorical": True,
-                                "significant": abs(eff) > eps})
-                if eff < -eps and (best_cat is None or res["J"] < best_cat[2]["J"]):
-                    best_cat = (v.key, ch, res, cand)
+                                "significant": abs(eff) > eps, "_res": res, "_cand": cand})
                 self._tick("Screening parameters")
         for v in cont:
             room_up, room_dn = v.hi - v.base, v.base - v.lo
@@ -145,8 +164,9 @@ class Search:
                     self._entry("screen", "rejected", cand, note=why, param=v.key)
                     continue
                 res = self._eval(cand, f"Screening · {v.label}")
-                eff = res["J"] / J0 - 1.0
+                eff = self._effect(cand, res, J0, f"Screening · {v.label}")
                 self._entry("screen", "screened", cand, res, param=v.key)
+                self.screened_all.append({"J": J0 * (1.0 + eff), "cand": cand, "res": res})
                 helps = (val > v.base) == (eff < 0)
                 ranking.append({"key": v.key, "label": v.label, "unit": v.unit, "tried": val, "base": v.base,
                                 "effect": eff, "per_range": eff * (v.hi - v.lo) / abs(val - v.base),
@@ -158,15 +178,49 @@ class Search:
             if not done:
                 ranking.append({"key": v.key, "label": v.label, "unit": v.unit, "effect": None,
                                 "note": "every move broke a constraint"})
+        if self.pairs:
+            sd = float(np.sqrt(np.mean([(a - b) ** 2 for a, b in self.pairs]) / 2.0))
+            eps_p = max(2.0 * sd, self.eps_floor, 0.3 * eps)
+            self.log(f"paired error: {sd:.4f} from {len(self.pairs)} design(s) at two sub-cell shifts; "
+                     f"changes must beat {eps_p:.2%} (whole-body shift: {eps:.2%})")
+            self.noise_info.update({"paired_sigma": sd, "whole_body_eps": eps, "eps": eps_p, "method": "paired sub-cell shifts"})
+            eps = eps_p
+            for r in ranking:
+                if r.get("effect") is not None:
+                    r["significant"] = abs(r["effect"]) > eps
+        for r in ranking:
+            if r.get("categorical") and r.get("effect") is not None and r["effect"] < -eps and \
+                    (best_cat is None or r["effect"] < best_cat[2]["J"] / J0 - 1.0):
+                best_cat = (r["key"], r["choice"], r["_res"], r["_cand"])
+        for r in ranking:
+            r.pop("_res", None)
+            r.pop("_cand", None)
         ranking.sort(key=lambda r: -abs(r["effect"]) if r.get("effect") is not None else 1.0)
         incumbent = {"J": J0, "cand": base, "res": r0}
         adopted = None
+        self.adopted_all = []
         rescreened = {}
+        helped = sorted([r for r in ranking if r.get("categorical") and r.get("effect") is not None and r["effect"] < -eps
+                         and best_cat is not None and r["key"] != best_cat[0]], key=lambda r: r["effect"])
         if best_cat is not None:
             k, ch, res, cand = best_cat
             adopted = {"key": k, "choice": ch, "label": sp.label(k), "effect": res["J"] / J0 - 1.0}
+            self.adopted_all = [adopted]
             incumbent = {"J": res["J"], "cand": cand, "res": res}
             self.log(f"adopting {sp.label(k)} = {ch} ({res['J'] / J0 - 1:+.2%})")
+            # other choices that helped on their own (generative features), added on top one at a time
+            for r in helped:
+                c2 = sp.build({**incumbent["cand"].values, r["key"]: r["choice"]})
+                if sp.full_check(c2):
+                    continue
+                r2 = self._eval(c2, f"Adding · {r['label']}")
+                self._entry("screen", "screened", c2, r2, param=r["key"])
+                self._tick("Screening parameters")
+                if r2["J"] < incumbent["J"] - eps * J0:
+                    self.adopted_all.append({"key": r["key"], "choice": r["choice"], "label": r["label"], "effect": r2["J"] / J0 - 1.0})
+                    self.log(f"adopting {r['label']} = {r['choice']} too ({r2['J'] / J0 - 1:+.2%} overall)")
+                    incumbent = {"J": r2["J"], "cand": c2, "res": r2}
+            k, ch, res, cand = k, ch, incumbent["res"], incumbent["cand"]
             # parameters that only matter for the adopted choice (a power-law exponent) are screened now
             new = sp.rebase(cand.values) if hasattr(sp, "rebase") else []
             self.keys_all = [v.key for v in sp.vars]
@@ -203,7 +257,8 @@ class Search:
         evaluated = [incumbent] + [{"J": res["J"], "cand": cand, "res": res}
                                    for k, (val, res, cand) in screened.items()]
         if not sel:
-            stop = "no parameter changes the objective by more than the measured error"
+            stop = ("added " + ", ".join(a["label"].lower() for a in self.adopted_all) + "; no dimension changed it further by more than the measured error"
+                    if self.adopted_all else "no parameter changes the objective by more than the measured error")
         elif self.evals >= self.budget:
             stop = "the run budget was used by the screening"
         else:
@@ -281,6 +336,10 @@ class Search:
         self.stop_reason = stop
         self.log(f"search stopped: {stop}")
 
+        # the best design seen, significant or not: offered as an unconfirmed lead when nothing is confirmed
+        leads = [e for e in evaluated + self.screened_all if e["cand"] is not base and e["J"] < J0]
+        self.promising = min(leads, key=lambda e: e["J"]) if leads else None
+
         # 4. confirmation
         pool = sorted([e for e in evaluated if e["J"] < J0 * (1.0 - eps)], key=lambda e: e["J"])
         picks = []
@@ -298,7 +357,14 @@ class Search:
             jb = rows[0]["J"]
             conf = []
             for p, r in zip(picks, rows[1:]):
-                conf.append({"explore_J": p["J"], "J": r["J"] / jb, "res": r, "cand": p["cand"]})
+                j = r["J"] / jb
+                if r.get("J_shift") is not None:          # paired: the mean of the plain and shifted comparisons
+                    j = 0.5 * (j + r["J_shift"])
+                conf.append({"explore_J": p["J"], "J": j, "res": r, "cand": p["cand"], "pair": (r["J"] / jb, r.get("J_shift"))})
+            pairs = [c["pair"] for c in conf if c["pair"][1] is not None]
+            if pairs:
+                sd = float(np.sqrt(np.mean([(a - b) ** 2 for a, b in pairs]) / 2.0))
+                eps_c = max(2.0 * sd, self.eps_floor, min(eps_c, max(eps, 0.3 * eps_c)))
             for c in conf:
                 self._entry("confirm", "confirmed" if c["J"] < 1.0 - eps_c else "not confirmed", c["cand"], {**c["res"], "J": c["J"]},
                             explore_objective=c["explore_J"])

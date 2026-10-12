@@ -33,6 +33,7 @@ from .strategy import Search
 from ..plans import EXPLORE_FID
 
 SHIFTS = [(0.37, 0.23, 0.29), (-0.31, 0.41, -0.17)]
+MIN_EXPLORE_CELLS = 12      # smallest body size across, in cells, that exploration can resolve
 G0 = 9.80665
 OBJ_LABELS = {**OBJECTIVES, "drag_fixed_lift": "Minimize drag at fixed lift"}
 
@@ -267,9 +268,19 @@ def optimize(r):
     per_full = r.runs_per_design()
     explore_cfd = not winged
     n_confirm = int(o.get("confirm", 2))
-    r.total_runs = max(1, (budget + 3) * per_x * explore_cfd + (n_confirm + 2) * per_full * (not wing_only))
+    # screening runs count against the budget (paired ones included); confirmation is paired too
+    r.total_runs = max(1, (budget + 3) * per_x * explore_cfd + (2 * n_confirm + 2) * per_full * (not wing_only))
     r.run_index = 0
     ev_x = r.make_evaluator(lo, hi, fid_x) if explore_cfd else None
+    # a body only a few cells across on the exploration grid changes drag by several percent with
+    # every sub-cell shift: no realistic design change could be told apart. On a GPU, explore on the
+    # chosen grid instead (the confirmation then re-measures its own error there).
+    from ..cfd.gpu import available as gpu_available
+    if ev_x is not None and fid_x.name != fid_full.name and min(ev_x.info()["body_cells"]) < MIN_EXPLORE_CELLS and gpu_available():
+        thin = min(ev_x.info()["body_cells"])
+        fid_x = dataclasses.replace(fid_full, u_lat=fid_x.u_lat) if fid_x.u_lat < fid_full.u_lat else fid_full
+        r.log(f"the body is only {thin:.1f} cells across on the {EXPLORE_FID.get(fid_full.name)} grid: exploring on {fid_full.name}")
+        ev_x = r.make_evaluator(lo, hi, fid_x)
     ev_full = None
     r.log(f"optimizing {len(space.vars)} parameter(s): explore with "
           f"{'the wing model' if winged else f'{fid_x.name} CFD on {len(sim_x)} angle(s)'}, budget {budget} designs")
@@ -289,6 +300,8 @@ def optimize(r):
         s = polar_summary(polar)
         return {"J": J, "drag_ratio": J, "cd_ref": s["cd_at_min_aoa"], "converged": all(p["converged"] for p in polar)}
 
+    base_shift = {}
+
     def noise():
         if winged:
             return []
@@ -297,8 +310,16 @@ def optimize(r):
             m = space.base.mesh.transformed(t=np.array(sh) * ev_x.domain.dx)
             r.fields_wanted = False
             polar, _ = r.evaluate_design(ev_x, m, f"Measuring solver error ({k + 1}/2)", sim_x, aoas=angles_x)
+            base_shift.setdefault(k, polar)
             out.append(objective("drag", polar, base_x["polar"]))
         return out
+
+    def paired(cand, label):
+        """The candidate shifted like the first error probe, against that shifted baseline."""
+        m = cand.mesh.transformed(t=np.array(SHIFTS[0]) * ev_x.domain.dx)
+        r.fields_wanted = False
+        polar, _ = r.evaluate_design(ev_x, m, label, sim_x, aoas=angles_x)
+        return objective("drag", polar, base_shift[0])
 
     kept = {}
 
@@ -315,9 +336,14 @@ def optimize(r):
         seq = [("Confirming · baseline", cands[0], cands[0].mesh)]
         seq.append(("Confirming · solver error", cands[0], cands[0].mesh.transformed(t=np.array(SHIFTS[0]) * ev_full.domain.dx)))
         seq += [(f"Confirming · candidate {k}", c, c.mesh) for k, c in enumerate(cands[1:], 1)]
+        if not winged:          # each candidate also at the error probe's shift: a paired comparison
+            seq += [(f"Confirming · candidate {k} (shifted)", c, c.mesh.transformed(t=np.array(SHIFTS[0]) * ev_full.domain.dx))
+                    for k, c in enumerate(cands[1:], 1)]
         js = []
+        shifted = {}
         for label, cand, mesh in seq:
-            r.fields_wanted = True
+            is_shift = label.endswith("(shifted)")
+            r.fields_wanted = not is_shift and label != "Confirming · solver error"
             polar, fields = r.evaluate_design(ev_full, mesh, label, r.sim_angles, groups=cand.groups if winged else None)
             if winged:
                 rows = lift.with_cfd(cand)
@@ -325,8 +351,13 @@ def optimize(r):
                 J = _ratio(rows, base)
                 extra = {"fixed_lift": _short(rows)}
             else:
+                if is_shift:
+                    shifted[id(cand)] = objective("drag", polar, base_ref["shift_polar"])
+                    continue
                 base = base_ref.setdefault("polar", polar)
                 J = objective("drag", polar, base)
+                if label == "Confirming · solver error":
+                    base_ref["shift_polar"] = polar
                 rows = None
                 extra = {}
             js.append(J)
@@ -334,6 +365,8 @@ def optimize(r):
                 kept[id(cand)] = (polar, fields, rows)
                 rows_out.append({"J": J, "drag_ratio": objective("drag", polar, base_ref.get("polar", polar)) if not winged else J,
                                  **extra})
+        for row, c in zip(rows_out[1:], cands[1:]):
+            row["J_shift"] = shifted.get(id(c))
         sigma = abs(js[1] - js[0]) / math.sqrt(2.0)
         rows_out[0]["eps"] = 2.0 * sigma
         r.log(f"confirmation error estimate: {sigma:.4f}")
@@ -345,7 +378,8 @@ def optimize(r):
 
     search = Search(space, explore, budget=budget, top_k=top_k, n_confirm=n_confirm,
                     eps_floor=0.004 if winged else 0.003, noise=noise, confirm=confirm,
-                    log=r.log, progress=progress, cancel=r.check_cancel, seed=int(o.get("seed", 7)))
+                    log=r.log, progress=progress, cancel=r.check_cancel, seed=int(o.get("seed", 7)),
+                    paired=None if winged else paired)
     search.relevance = None
     search.run()
 
@@ -358,7 +392,7 @@ def optimize(r):
               "improvement": 1.0 - search.best["J"], "zones": [{"name": z.name, "type": z.type} for z in r.zones],
               "keep_zones": [], "history": search.history, "relevance": search.relevance,
               "strategy": {"noise": search.noise_info, "ranking": search.ranking, "selected": search.selected,
-                           "adopted": search.adopted, "stop_reason": search.stop_reason, "confirmed": search.confirmed,
+                           "adopted": search.adopted, "adopted_all": getattr(search, "adopted_all", []), "stop_reason": search.stop_reason, "confirmed": search.confirmed,
                            "reliable": search.reliable, "epsilon": search.final_eps, "budget": budget, "top_k": top_k,
                            "designs_explored": search.evals, "rejected": search.rejected,
                            "explore": "wing model (coarse)" if winged else fid_x.name,
@@ -388,6 +422,15 @@ def optimize(r):
                                 "neutral_point_shift_mm": (lift.quick(best_c)[0] - lift.quick(base_c)[0]) * 1000}
     (r.out / "baseline_body.stl").write_bytes(base_c.mesh.to_stl_bytes())
     (r.out / "best_body.stl").write_bytes(best_c.mesh.to_stl_bytes())
+    lead = search.promising
+    if not search.reliable and lead is not None:
+        # nothing beat the measured error: still show the most promising design, clearly labelled
+        (r.out / "promising_body.stl").write_bytes(lead["cand"].mesh.to_stl_bytes())
+        (r.out / "promising.stl").write_bytes(r.frame.to_file_frame(lead["cand"].mesh).to_stl_bytes(b"AeroSculpt unconfirmed lead"))
+        result["promising"] = {"change": lead["J"] - 1.0, "eps": search.final_eps, "mesh": "promising_body.stl",
+                               "values": {k: _jsonable(v) for k, v in lead["cand"].values.items()},
+                               "features": [{**c, "base": _jsonable(c["base"]), "best": _jsonable(c["best"])} for c in space.changes(lead["cand"])]
+                               if features else None}
     export = r.frame.to_file_frame(best_c.mesh)
     (r.out / "optimized.stl").write_bytes(export.to_stl_bytes(b"AeroSculpt optimized design"))
     result["meshes"] = {"baseline": "baseline_body.stl", "best": "best_body.stl"}

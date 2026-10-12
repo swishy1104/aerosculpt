@@ -28,7 +28,7 @@ class HyperRunner(Runner):
         spec = self.spec
         m = spec.get("model", {})
         raw = load_model(self.model_path, self.filename)
-        self.frame = ModelFrame(raw, m.get("units", "m"), m.get("forward", "-x"), m.get("up", "+z"))
+        self.frame = ModelFrame(raw, m.get("units", "m"), m.get("forward", "-x"), m.get("up", "+z"), m.get("scale"))
         env = spec.get("envelope", {})
         self.machs = sorted(float(v) for v in env.get("machs", [2.0]))
         self.aoas = sorted(float(a) for a in env.get("aoas", [0.0]))
@@ -238,7 +238,7 @@ class HyperRunner(Runner):
             "keep_zones": space.dfm.keep.report() if mode == "aspects" and space.dfm.keep is not None else [],
             "history": search.history, "relevance": search.relevance, "verified": None,
             "strategy": {"noise": search.noise_info, "ranking": search.ranking, "selected": search.selected,
-                         "adopted": search.adopted, "stop_reason": search.stop_reason, "confirmed": None,
+                         "adopted": search.adopted, "adopted_all": getattr(search, "adopted_all", []), "stop_reason": search.stop_reason, "confirmed": None,
                          "reliable": search.reliable, "epsilon": search.final_eps, "budget": budget, "top_k": top_k,
                          "designs_explored": search.evals, "rejected": search.rejected,
                          "explore": "surface methods", "confirm": None, "cache_hits": 0},

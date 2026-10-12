@@ -816,3 +816,11 @@ body[data-tunnel="rc"] .sec-h .n { background: var(--rc-soft); border-color: col
 .ft-h .badge { flex: none; }
 .ft-b { display: none; padding: 0 10px 8px; }
 .ft-card.open .ft-b { display: block; }
+.ft-gen { display: flex; flex-direction: column; gap: 6px; padding: 10px; margin: 0 0 12px; border: 1px dashed var(--accent-line);
+  border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.ft-gen .btn { align-self: flex-start; gap: 6px; }
+.ft-opt { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; font-size: 12.5px; }
+.ft-ai { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.ft-ai textarea { width: 100%; resize: vertical; font: inherit; font-size: 12.5px; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text); }
+.ft-ai .btn { align-self: flex-start; gap: 6px; }

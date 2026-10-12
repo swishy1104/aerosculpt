@@ -245,25 +245,38 @@ class FeatureSpace:
         self.frame = frame
         self.c = constraints
         self.dfm = getattr(inner, "dfm", None)
-        self.fvars = []
-        for f in self.features:
-            for p in FT.get(f["type"])["params"]:
-                if FT.locked(p, f) or not T.active(p, f["values"]):
-                    continue
-                key, label, base = f"F.{f['id']}.{p.key}", f"{f['name']} · {p.label}", f["values"][p.key]
-                if p.kind == "choice":
-                    self.fvars.append(Var(key, label, "choice", 0, 0, base, [c[0] for c in p.choices], "features"))
-                    continue
-                lo, hi = FT.bounds(p, f)
-                lo, hi = min(lo, base), max(hi, base)
-                if hi - lo > 1e-12:
-                    self.fvars.append(Var(key, label, p.unit, lo, hi, float(base), None, "features"))
-        self.vars = list(inner.vars) + self.fvars
+        # optional (proposed) features start out of the design: the optimizer screens adding each one,
+        # and only an adopted one's dimensions join the search
+        self.use = {f["id"]: "off" for f in self.features if f.get("optional")}
+        self._make_vars()
         self.base_values = {**getattr(inner, "base_values", {}), **{v.key: v.base for v in self.fvars}}
         self.base = self.build({})
         self.base_union = FT.union_volume(self.base.mesh)
         self.base_planform = projected_area(self.base.mesh, 2)
         self.base_check = checks.check(self.base.mesh)
+
+    def _make_vars(self):
+        FT = self.FT
+        fv = []
+        for f in self.features:
+            if f["id"] in self.use:
+                fv.append(Var(f"F.{f['id']}._use", f"Add {f['name'].replace(' (proposed)', '').lower()}", "choice", 0, 0,
+                              self.use[f["id"]], ["off", "on"], "features"))
+                if self.use[f["id"]] == "off":
+                    continue
+            for p in FT.get(f["type"])["params"]:
+                if FT.locked(p, f) or not T.active(p, f["values"]):
+                    continue
+                key, label, base = f"F.{f['id']}.{p.key}", f"{f['name']} · {p.label}", f["values"][p.key]
+                if p.kind == "choice":
+                    fv.append(Var(key, label, "choice", 0, 0, base, [c[0] for c in p.choices], "features"))
+                    continue
+                lo, hi = FT.bounds(p, f)
+                lo, hi = min(lo, base), max(hi, base)
+                if hi - lo > 1e-12:
+                    fv.append(Var(key, label, p.unit, lo, hi, float(base), None, "features"))
+        self.fvars = fv
+        self.vars = list(self.inner.vars) + fv
 
     @staticmethod
     def split(values):
@@ -278,9 +291,17 @@ class FeatureSpace:
 
     def build(self, values, preview=False) -> Candidate:
         inner_vals, over = self.split(values)
+        for fid, u in self.use.items():
+            over.setdefault((fid, "_use"), u)
         ic = self.inner.build(inner_vals, preview=preview)
         mesh, probs, info = self.FT.apply(ic.mesh, self.features, self.frame, over)
         vals = dict(ic.values)
+        # every free dimension, also of ideas not added yet: once one is adopted its dimensions join
+        # the search starting from these values
+        for f in self.features:
+            for p in self.FT.get(f["type"])["params"]:
+                if not self.FT.locked(p, f):
+                    vals[f"F.{f['id']}.{p.key}"] = f["values"][p.key]
         vals.update({v.key: v.base for v in self.fvars})
         vals.update({f"F.{fid}.{k}": v for (fid, k), v in over.items()})
         out = dict(ic.info)
@@ -320,11 +341,17 @@ class FeatureSpace:
         return None
 
     def rebase(self, values):
-        if not hasattr(self.inner, "rebase"):
-            return []
-        new = self.inner.rebase(self.split(values)[0])
-        self.vars = list(self.inner.vars) + self.fvars
-        return new
+        """After a choice is adopted: an added feature's dimensions (or a template's newly relevant
+        parameters) join the search. Returns the variables that became active."""
+        old = {v.key for v in self.vars}
+        if hasattr(self.inner, "rebase"):
+            self.inner.rebase(self.split(values)[0])
+        for fid in self.use:
+            u = (values or {}).get(f"F.{fid}._use")
+            if u in ("on", "off"):
+                self.use[fid] = u
+        self._make_vars()
+        return [v for v in self.vars if v.key not in old]
 
     def label(self, key):
         for v in self.vars:
@@ -334,8 +361,14 @@ class FeatureSpace:
 
     def changes(self, best: Candidate):
         """Feature dimensions the optimizer was free to change: original and optimized values."""
-        return [{"key": v.key, "label": v.label, "unit": v.unit, "base": v.base, "best": best.values.get(v.key, v.base)}
-                for v in self.fvars]
+        out = []
+        for f in self.features:
+            if f["id"] in self.use:
+                out.append({"key": f"F.{f['id']}._use", "label": f"Add {f['name'].replace(' (proposed)', '').lower()}", "unit": "choice",
+                            "base": "off", "best": best.values.get(f"F.{f['id']}._use", "off")})
+        seen = {c["key"] for c in out}
+        return out + [{"key": v.key, "label": v.label, "unit": v.unit, "base": v.base, "best": best.values.get(v.key, v.base)}
+                      for v in self.fvars if v.key not in seen]
 
 
 class FixedSpace:

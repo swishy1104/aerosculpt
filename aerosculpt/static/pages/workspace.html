@@ -29,7 +29,10 @@
         <div class="kv" id="model-kv" style="margin-bottom:14px"></div>
         <div id="model-axes">
         <label class="field"><span>File units</span>
-          <select id="units"><option value="mm">Millimetres</option><option value="cm">Centimetres</option><option value="m">Metres</option><option value="in">Inches</option><option value="ft">Feet</option></select></label>
+          <select id="units"><option value="mm">Millimetres</option><option value="cm">Centimetres</option><option value="m">Metres</option><option value="in">Inches</option><option value="ft">Feet</option><option value="custom">Set the real length…</option></select></label>
+        <label class="field hidden" id="real-len-row"><span>Real overall length (m)</span>
+          <input type="number" id="real_len" step="any" min="0" placeholder="e.g. 4.46"></label>
+        <div id="solid-box"></div>
         <div class="two">
           <label class="field"><span>Nose points along</span><select id="forward"></select></label>
           <label class="field"><span>Up is</span><select id="up"></select></label>

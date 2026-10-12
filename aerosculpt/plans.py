@@ -14,7 +14,7 @@ TUNNELS = ["general", "rc", "supersonic"]
 CREDITS_PER_RUN = {"coarse": 0.4, "draft": 1, "standard": 3, "high": 8}
 # the optimizer explores on the next coarser grid and confirms at the fidelity the user chose
 EXPLORE_FID = {"draft": "coarse", "standard": "draft", "high": "draft"}
-CONFIRM_DESIGNS = 4          # baseline, its error probe and two candidates
+CONFIRM_DESIGNS = 6          # baseline, its error probe, two candidates and each again at the probe's shift
 
 PLANS = {
     "lite": {

@@ -50,6 +50,7 @@ export class FeatureEditor {
     const out = [];
     for (const f of this.list) {
       if (f.enabled === false) continue;
+      if (f.optional) out.push([f, { key: "_use", kind: "choice", choices: [["off"], ["on"]] }]);
       for (const p of this.def(f).params) if (!this.locked(p, f) && isActive(p, f.values)) out.push([f, p]);
     }
     return out;
@@ -61,6 +62,14 @@ export class FeatureEditor {
     const kinds = ["add", "cut", "modify"];
     this.box.innerHTML = `<p class="lead">Add or reshape parts like a CAD timeline: features apply in order, each with named
         dimensions. Unlock a dimension to let the optimizer change it. Added parts merge with the body in the tunnel.</p>
+      <div class="ft-gen"><button class="btn sm primary" type="button" id="ft-generate">${icon("sparkles")}Generate design ideas</button>
+        <span class="small muted">Proposes new geometry for this body (a boat-tail that follows its own section, a rounded front,
+        rear slant and diffuser angles). Each is optional: the optimizer tries the design with and without it and keeps only what beats
+        the measured error.</span>
+        ${this.ctx.catalog.ai && this.ctx.catalog.ai.available ? `<div class="ft-ai"><textarea id="ft-brief" rows="2" maxlength="1500"
+          placeholder="Optional: describe what you want, e.g. less drag at highway speed, keep the hatch opening"></textarea>
+          <button class="btn sm" type="button" id="ft-ask">${icon("sparkles")}Ask the AI assistant</button>
+          <span class="small muted">${esc(this.ctx.catalog.ai.model)}${this.ctx.catalog.ai.local ? " · runs on this server, nothing leaves it" : ""}</span></div>` : ""}</div>
       ${kinds.map((k) => `<div class="ft-kind"><span class="ft-kl">${KIND_LABEL[k]}</span><div class="ft-add">${Object.entries(this.defs)
         .filter(([, d]) => d.kind === k).map(([t, d]) => `<button class="btn sm" type="button" data-add="${t}" title="${esc(d.help)}">${icon(d.icon)}${esc(d.title)}</button>`).join("")}</div></div>`).join("")}
       <div id="ft-problems"></div>
@@ -68,6 +77,8 @@ export class FeatureEditor {
       <p class="small muted" id="ft-limit" style="margin:6px 0 0">${this.list.length ? "" : "No features yet: the model is simulated as uploaded."}
         ${this.list.length >= limit ? ` Your plan allows ${limit}.` : ""}</p>`;
     $$("[data-add]", this.box).forEach((b) => b.addEventListener("click", () => this.add(b.dataset.add)));
+    $("#ft-generate", this.box).addEventListener("click", (e) => this.generate(e.currentTarget));
+    if ($("#ft-ask", this.box)) $("#ft-ask", this.box).addEventListener("click", (e) => this.askAI(e.currentTarget));
     this.renderList();
     this.showProblems();
   }
@@ -86,12 +97,14 @@ export class FeatureEditor {
     const free = d.params.filter((p) => !this.locked(p, f) && isActive(p, f.values)).length;
     card.innerHTML = `<div class="ft-h"><span class="ft-n">${i + 1}</span>${icon(d.icon, "i sm")}
         <input type="text" value="${esc(f.name)}" maxlength="60" aria-label="Feature name">
+        ${f.optional ? `<span class="badge" title="The optimizer tries the design with and without it">optional</span>` : ""}
         ${free ? `<span class="badge accent" title="Dimensions the optimizer may change">${free} free</span>` : ""}
         <button class="icon-btn" data-act="up" title="Earlier in the timeline" ${i === 0 ? "disabled" : ""}>${icon("chev", "i sm up")}</button>
         <button class="icon-btn" data-act="toggle" title="${f.enabled === false ? "Switched off: click to use it" : "Switch off (keep it)"}">${icon(f.enabled === false ? "x" : "eye", "i sm")}</button>
         ${d.region || NEEDS_CLICK[f.type] ? `<button class="icon-btn" data-act="edit" title="Move${d.region ? ", turn and resize" : " and turn"} it in the 3D view">${icon("move", "i sm")}</button>` : ""}
         <button class="icon-btn" data-act="del" title="Remove">${icon("trash", "i sm")}</button></div>
-      <div class="ft-b">${this.paramsHTML(f)}</div>`;
+      <div class="ft-b">${f.why ? `<p class="small" style="margin:2px 0 8px">${icon("sparkles", "i sm")} ${esc(f.why)}</p>` : ""}<label class="check ft-opt"><input type="checkbox" data-optional ${f.optional ? "checked" : ""}>
+        <span>Let the optimizer decide whether to add it</span></label>${this.paramsHTML(f)}</div>`;
     const inp = $(".ft-h input", card);
     inp.addEventListener("change", () => { f.name = inp.value.trim() || d.title; this.ctx.save(); });
     $(".ft-h", card).addEventListener("click", (e) => {
@@ -109,7 +122,15 @@ export class FeatureEditor {
       this.render();
       this.rebuild(true);
     }));
-    if (isOpen) this.wire(f, card);
+    if (isOpen) {
+      this.wire(f, card);
+      $("[data-optional]", card).addEventListener("change", (e) => {
+        if (e.target.checked) f.optional = true; else delete f.optional;
+        this.renderList();
+        this.ctx.save();
+        this.ctx.changed();
+      });
+    }
     return card;
   }
 
@@ -212,6 +233,44 @@ export class FeatureEditor {
       this.rebuild(true);
       toast(`${f.name} added. Adjust its dimensions on the left${this.def(f).region ? " or drag its box in the view" : ""}.`, "good");
     } catch (e) { handleError(e); }
+  }
+
+  async generate(btn) {
+    const limit = this.ctx.me.limits.max_features ?? 24;
+    btn.disabled = true;
+    try {
+      const ideas = await api(`/api/projects/${this.ctx.pid}/features/propose`, { method: "POST", body: { features: this.list } });
+      const have = new Set(this.list.map((f) => f.name));
+      const fresh = ideas.filter((f) => !have.has(f.name)).slice(0, Math.max(0, limit - this.list.length));
+      if (!fresh.length) {
+        toast(ideas.length ? "Those ideas are already in the list (or your plan's feature limit is reached)." : "No ideas for this shape: its ends are already streamlined.", "bad");
+        return;
+      }
+      this.list.push(...fresh);
+      this.open = fresh[0].id;
+      this.render();
+      this.rebuild(true);
+      toast(`${fresh.length} idea${fresh.length > 1 ? "s" : ""} added: ${fresh.map((f) => f.name.replace(" (proposed)", "")).join(", ")}. Run Optimize to test them.`, "good");
+    } catch (e) { handleError(e); } finally { btn.disabled = false; }
+  }
+
+  async askAI(btn) {
+    const limit = this.ctx.me.limits.max_features ?? 24;
+    btn.disabled = true;
+    const label = btn.innerHTML;
+    btn.innerHTML = `<span class="spin"></span>Thinking…`;
+    try {
+      const r = await api(`/api/projects/${this.ctx.pid}/features/ai`, { method: "POST",
+        body: { features: this.list, brief: $("#ft-brief", this.box).value } });
+      const have = new Set(this.list.map((f) => f.name));
+      const fresh = r.ideas.filter((f) => !have.has(f.name)).slice(0, Math.max(0, limit - this.list.length));
+      if (!fresh.length) return toast(r.notes || "The assistant had no new ideas for this body.", "bad");
+      this.list.push(...fresh);
+      this.open = fresh[0].id;
+      this.render();
+      this.rebuild(true);
+      toast(`${fresh.length} AI idea${fresh.length > 1 ? "s" : ""} added. ${r.notes}`.trim(), "good");
+    } catch (e) { handleError(e); } finally { btn.disabled = false; btn.innerHTML = label; }
   }
 
   /** after a gizmo drag changed a feature's placement */

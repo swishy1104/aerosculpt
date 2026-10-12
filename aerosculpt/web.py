@@ -39,7 +39,7 @@ PAGES = STATIC / "pages"
 SESSION_COOKIE = "as_session"
 CSRF_HEADER = "x-requested-with"
 VERSION = "1.0.0"
-JOB_FILES = {"result.json", "history.json", "baseline_body.stl", "best_body.stl", "optimized.stl"}
+JOB_FILES = {"result.json", "history.json", "baseline_body.stl", "best_body.stl", "optimized.stl", "promising_body.stl", "promising.stl"}
 JOB_FIELD_FILE = re.compile(r"^fields_(baseline|best)_\d{1,3}\.json$")
 AXES = ("+x", "-x", "+y", "-y", "+z", "-z")
 
@@ -97,6 +97,7 @@ def current_user(request: Request, con, required=True):
 PREVIEW_EMAIL = "preview@aerosculpt.local"
 GUEST_DOMAIN = "guest.aerosculpt.local"
 guest_limiter = RateLimiter(limit=4, window_s=3600)
+ai_limiter = RateLimiter(limit=30, window_s=3600)
 
 
 def _preview_user(con):
@@ -362,6 +363,11 @@ async def api_key(request: Request):
 
 
 # ---- catalog ------------------------------------------------------------------------------
+def ai_info():
+    from . import ai
+    return ai.info()
+
+
 def FT_catalog():
     from .geometry import features as FT
     return FT.catalog()
@@ -401,6 +407,7 @@ async def plans(request: Request):
         "explore_fidelity": EXPLORE_FID,
         "templates": T.catalog(),
         "features": FT_catalog(),
+        "ai": ai_info(),
         "materials": MATERIALS,
         "hyper_objectives": dict(HYPER_OBJECTIVES),
         "prop_families": {k: {"name": f["name"], "note": f["note"]} for k, f in PROP_FAMILIES.items()},
@@ -460,7 +467,7 @@ def _model_frame(project, st):
     from .optimize.runner import ModelFrame, load_model
     path = project_dir(project["id"]) / ("model." + project["filename"].rsplit(".", 1)[-1].lower())
     raw = load_model(path, project["filename"])
-    return ModelFrame(raw, st.get("units", "m"), st.get("forward", "-x"), st.get("up", "+z"))
+    return ModelFrame(raw, st.get("units", "m"), st.get("forward", "-x"), st.get("up", "+z"), st.get("unit_scale"))
 
 
 def _features_body(project, st, features):
@@ -495,6 +502,67 @@ async def feature_suggest(request: Request):
     except ValueError as e:
         err(400, str(e))
     return JSONResponse(f)
+
+
+async def feature_propose(request: Request):
+    """Generative ideas: features worth trying on this model (boat-tail, rounded front, rear slant,
+    diffuser), each optional so the optimizer adds only those that beat the measured error."""
+    from .geometry import features as FT
+    with db() as con:
+        user = current_user(request, con)
+        project = _get_project(con, user, request.path_params["pid"])
+    data = await body_json(request, limit=500_000)
+    st = _migrate(json.loads(project["settings"] or "{}"))
+    existing = [f for f in _clean_features(data.get("features", st.get("features") or [])) if f.get("enabled", True)]
+
+    def work():
+        fr, ff, body, _, _ = _features_body(project, st, [f for f in existing if not f.get("optional")])
+        return FT.propose(body, ff)
+
+    try:
+        return JSONResponse(await run_in_threadpool(work))
+    except ValueError as e:
+        err(400, str(e))
+
+
+async def feature_ai(request: Request):
+    """The AI design assistant: ideas from the generative menu chosen and sized by a language model
+    from the brief, the body and its last result, each built as an optional feature."""
+    from . import ai
+    from .geometry import features as FT
+    with db() as con:
+        user = current_user(request, con)
+        project = _get_project(con, user, request.path_params["pid"])
+        last = con.execute("""SELECT summary FROM jobs WHERE project_id=? AND status='done' AND summary IS NOT NULL
+                              ORDER BY finished_at DESC LIMIT 1""", (project["id"],)).fetchone()
+    if not ai.available():
+        err(404, "The AI assistant is not set up on this server.")
+    if not ai_limiter.allow(f"ai:{user['id']}"):
+        err(429, "Too many AI requests this hour.")
+    data = await body_json(request, limit=500_000)
+    st = _migrate(json.loads(project["settings"] or "{}"))
+    existing = [f for f in _clean_features(data.get("features", st.get("features") or [])) if f.get("enabled", True)]
+    brief = str(data.get("brief") or "")[:1500]
+
+    def work():
+        fr, ff, body, _, _ = _features_body(project, st, [f for f in existing if not f.get("optional")])
+        summary = FT.body_summary(body)
+        answer = ai.ask(brief, summary, json.loads(last["summary"]) if last else None)
+        out = []
+        for it in answer["ideas"]:
+            f = FT.idea(it["idea"], body, ff, it["hints"])
+            if f is not None:
+                f["name"] = f["name"].replace("(proposed)", "(AI)")
+                f["why"] = it["why"]
+                out.append(f)
+        return {"ideas": out, "notes": answer["notes"], "model": ai.info()["model"]}
+
+    try:
+        return JSONResponse(await run_in_threadpool(work))
+    except (ValueError, RuntimeError) as e:
+        err(502, f"AI assistant: {e}")
+    except Exception as e:  # noqa: BLE001 - network trouble, timeouts
+        err(502, f"The AI assistant did not answer ({type(e).__name__}).")
 
 
 def _num3(v, what):
@@ -737,6 +805,54 @@ async def projects(request: Request):
         return JSONResponse(_project_out(p, con), status_code=201)
 
 
+async def project_solidify(request: Request):
+    """A watertight copy of a visual mesh (open panels, gaps, many pieces) as a new project with the
+    same settings; the original project is left as it is (geometry/repair.py)."""
+    from .geometry.repair import solidify
+    from .optimize.runner import load_model
+    with db() as con:
+        user = current_user(request, con)
+        project = _get_project(con, user, request.path_params["pid"])
+        plan = plan_for(user)
+        n = con.execute("SELECT COUNT(*) AS n FROM projects WHERE user_id=?", (user["id"],)).fetchone()["n"]
+    if plan["max_projects"] is not None and n >= plan["max_projects"]:
+        err(402, f"{plan['name']} includes {plan['max_projects']} projects. Delete one to make a solid copy.", upgrade=True)
+    if not upload_limiter.allow(f"up:{user['id']}"):
+        err(429, "Too many new models this hour.")
+    data = await body_json(request)
+    cells = {"standard": 220, "fine": 300}.get(data.get("detail"), 220)
+    path = project_dir(project["id"]) / ("model." + project["filename"].rsplit(".", 1)[-1].lower())
+
+    def work():
+        mesh, info = solidify(load_model(path, project["filename"]), cells=cells,
+                              max_faces=int(min(plan["max_triangles"] * 0.9, 400_000)))
+        return mesh.to_stl_bytes(b"AeroSculpt solid"), info
+
+    try:
+        stl, info = await run_in_threadpool(work)
+    except ValueError as e:
+        err(400, f"Could not make a solid: {e}")
+    n_faces, _, _, _, met = await run_in_threadpool(_inspect_model, stl, "model.stl")
+    if n_faces > plan["max_triangles"]:
+        err(413, f"The solid has {n_faces:,} triangles; {plan['name']} supports up to {plan['max_triangles']:,}.", upgrade=True)
+    met["solidified"] = {k: info[k] for k in ("cell", "pieces_before", "parts_kept")}
+    st = json.loads(project["settings"] or "{}")
+    pid = uuid.uuid4().hex[:12]
+    pdir = project_dir(pid)
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "model.stl").write_bytes(stl)
+    base = project["filename"].rsplit(".", 1)[0]
+    now = time.time()
+    with db() as con:
+        con.execute("""INSERT INTO projects (id, user_id, name, created_at, updated_at, filename, source_format,
+                       file_size, settings, metrics) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (pid, user["id"], f"{project['name']} (solid)"[:120], now, now, f"{base}-solid.stl"[:120], "solidified",
+                     len(stl), json.dumps(st), json.dumps(met)))
+        audit(con, user["id"], "project_solidified", f"{project['id']} -> {pid}")
+        p = con.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+        return JSONResponse(_project_out(p, con), status_code=201)
+
+
 DEFAULT_ENVELOPE = {"speed_min": 15.0, "speed_max": 40.0, "speed_count": 4, "aoa_min": 0.0, "aoa_max": 8.0,
                     "aoa_count": 3, "altitude": 0.0, "yaw": 0.0, "ref_area": None, "ref_length": None}
 ENVELOPE_LIMITS = {"speed_min": (0.5, 450.0), "speed_max": (0.5, 450.0), "aoa_min": (-30.0, 30.0),
@@ -824,6 +940,8 @@ def _clean_features(items):
 def _free_features(features):
     """Whether any enabled feature has a dimension left free for the optimizer."""
     from .geometry import features as FT
+    if any(f.get("optional") and f.get("enabled", True) for f in features):
+        return True
     for f in features:
         for p in FT.get(f["type"])["params"]:
             if not FT.locked(p, f) and T.active(p, f["values"]):
@@ -933,9 +1051,16 @@ def _clean_hyper(data, old):
 def _clean_settings(data, old):
     st = _migrate(dict(old))
     if "units" in data:
-        if data["units"] not in ("mm", "cm", "m", "in", "ft"):
+        if data["units"] not in ("mm", "cm", "m", "in", "ft", "custom"):
             err(400, "Unknown unit.")
         st["units"] = data["units"]
+    if "unit_scale" in data:
+        v = _num(data["unit_scale"], "model scale")
+        if not (1e-7 < v < 1e4):
+            err(400, "The model scale is out of range.")
+        st["unit_scale"] = v
+    if st.get("units") == "custom" and not st.get("unit_scale"):
+        err(400, "Give the model's real length to size it.")
     for k in ("forward", "up"):
         if k in data:
             if data[k] not in AXES:
@@ -1016,7 +1141,14 @@ def _body_length(project, st):
     if not lo or not hi:
         return None
     axis = "xyz".index(st.get("forward", "-x")[1])
-    return (hi[axis] - lo[axis]) * UNIT_SCALE.get(st.get("units", "m"), 1.0)
+    return (hi[axis] - lo[axis]) * _unit_scale(st)
+
+
+def _unit_scale(st):
+    from .geometry.mesh import UNIT_SCALE
+    if st.get("units") == "custom":
+        return float(st.get("unit_scale") or 1.0)
+    return UNIT_SCALE.get(st.get("units", "m"), 1.0)
 
 
 async def project_item(request: Request):
@@ -1097,8 +1229,8 @@ def _build_spec(data, project, plan):
         fid = fidelity_name(data.get("fidelity", "draft"))
     except KeyError:
         err(400, "Unknown fidelity.")
-    st = _clean_settings({k: data[k] for k in ("units", "forward", "up", "envelope", "zones", "tunnel", "propellers", "hyper",
-                                                "features") if k in data}, st)
+    st = _clean_settings({k: data[k] for k in ("units", "unit_scale", "forward", "up", "envelope", "zones", "tunnel", "propellers",
+                                                "hyper", "features") if k in data}, st)
     st = _migrate(st)
     tunnel = st.get("tunnel", "general")
     if tunnel == "supersonic":
@@ -1106,7 +1238,7 @@ def _build_spec(data, project, plan):
     env = st["envelope"]
     speeds, aoas = envelope_points(env)
     spec = {"kind": kind, "fidelity": fid, "tunnel": tunnel,
-            "model": {"units": st["units"], "forward": st["forward"], "up": st["up"]},
+            "model": {"units": st["units"], "forward": st["forward"], "up": st["up"], "scale": st.get("unit_scale")},
             "envelope": {"speeds": speeds, "aoas": aoas, "altitude": env["altitude"], "yaw": env["yaw"],
                          "ref_area": env["ref_area"], "ref_length": env["ref_length"]},
             "zones": [z for z in st.get("zones", []) if z["type"] != "material"]}
@@ -1209,7 +1341,7 @@ def _build_hyper_spec(data, kind, st, plan):
     env = hy["envelope"]
     machs, aoas = hyper_points(env)
     spec = {"kind": kind, "tunnel": "supersonic", "fidelity": "panel",
-            "model": {"units": st["units"], "forward": st["forward"], "up": st["up"]},
+            "model": {"units": st["units"], "forward": st["forward"], "up": st["up"], "scale": st.get("unit_scale")},
             "envelope": {"machs": machs, "aoas": aoas, "altitude": env["altitude"], "yaw": env["yaw"],
                          "ref_area": env["ref_area"], "ref_length": env["ref_length"]},
             "thermal": dict(hy["thermal"]), "zones": st.get("zones", [])}
@@ -1382,7 +1514,7 @@ async def job_file(request: Request):
         j = _get_job(con, user, request.path_params["jid"])
         plan = plan_for(user)
         project = con.execute("SELECT name FROM projects WHERE id=?", (j["project_id"],)).fetchone()
-    if name == "optimized.stl" and not plan["export"]:
+    if name in ("optimized.stl", "promising.stl") and not plan["export"]:
         err(403, "Exporting optimized geometry is available on Pro and Team.", upgrade=True)
     f = job_dir(j["id"]) / name
     if not f.exists():
@@ -1390,9 +1522,9 @@ async def job_file(request: Request):
     if name.endswith(".json"):
         return FileResponse(f, media_type="application/json", headers={"Cache-Control": "private, max-age=3600"})
     dl = None
-    if name == "optimized.stl":
+    if name in ("optimized.stl", "promising.stl"):
         base = "".join(c for c in (project["name"] if project else "design") if c.isalnum() or c in "-_ ").strip() or "design"
-        dl = f"{base} - optimized.stl"
+        dl = f"{base} - {'optimized' if name == 'optimized.stl' else 'most promising (unconfirmed)'}.stl"
     return FileResponse(f, media_type="model/stl", filename=dl)
 
 
@@ -1632,6 +1764,9 @@ routes = [
     Route("/api/projects/{pid}/thumbnail", project_thumb, methods=["GET", "POST"]),
     Route("/api/projects/{pid}/jobs", project_jobs, methods=["GET", "POST"]),
     Route("/api/projects/{pid}/features/suggest", feature_suggest, methods=["POST"]),
+    Route("/api/projects/{pid}/solidify", project_solidify, methods=["POST"]),
+    Route("/api/projects/{pid}/features/propose", feature_propose, methods=["POST"]),
+    Route("/api/projects/{pid}/features/ai", feature_ai, methods=["POST"]),
     Route("/api/projects/{pid}/features/build", feature_build, methods=["POST"]),
     Route("/api/jobs/{jid}", job_item),
     Route("/api/jobs/{jid}/cancel", job_cancel, methods=["POST"]),

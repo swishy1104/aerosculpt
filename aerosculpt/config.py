@@ -62,6 +62,12 @@ class Settings:
     guest_demo = _bool("GUEST_DEMO", False)
     guest_hours = float(os.environ.get("GUEST_HOURS", "24"))
     guest_max_active = int(os.environ.get("GUEST_MAX_ACTIVE", "60"))
+    # optional AI design assistant (aerosculpt/ai.py): any OpenAI-compatible chat endpoint, e.g. a
+    # free local model through Ollama (http://127.0.0.1:11434/v1). Unset = off, nothing is sent.
+    ai_base_url = os.environ.get("AI_BASE_URL", "").strip()
+    ai_model = os.environ.get("AI_MODEL", "").strip()
+    ai_api_key = os.environ.get("AI_API_KEY", "").strip()
+    ai_timeout_s = float(os.environ.get("AI_TIMEOUT_S", "90"))
 
     # Email (password resets). Without SMTP the link is written to the server log.
     smtp_host = os.environ.get("SMTP_HOST", "")

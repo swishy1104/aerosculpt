@@ -288,17 +288,26 @@ class Tunnel:
 
 
 def converge(tunnel: Tunnel, stats: RunStats, chunk: int, min_chunks: int, max_chunks: int,
-             avg_chunks: int, tol: float, a_ref_lat: float, progress=None):
-    """Run in chunks until the windowed mean drag coefficient settles.
+             avg_chunks: int, tol: float, a_ref_lat: float, progress=None, avg_from=None, se_tol=None):
+    """Run in chunks until the time-averaged drag coefficient settles.
 
-    Convergence is judged on the objective (Cd), not on residuals: the mean of the last
-    `avg_chunks` chunks must move by less than `tol` (relative) between successive checks.
+    Convergence is judged on the objective (Cd), not on residuals: the running mean must move by
+    less than `tol` (relative) between successive checks. The mean covers every chunk from
+    `avg_from` on (default: the last `avg_chunks`). With `se_tol`, its standard error must also be
+    below se_tol x |mean|: a steady flow passes at once, while an unsteady wake (a car's base, a
+    bluff fairing) keeps averaging until enough shedding cycles are in the mean, so two runs of
+    the same shape agree and a few-percent design change stands out.
     Returns (converged, mean force vector, std of Cd over the window).
     """
     qA = 0.5 * tunnel.flow.u_lat ** 2 * a_ref_lat
     means = []
     chunk_means = []
     converged = False
+
+    def window():
+        w = chunk_means[avg_from:] if avg_from is not None else chunk_means[-avg_chunks:]
+        return np.array(w if len(w) >= avg_chunks else chunk_means[-avg_chunks:])
+
     for c in range(max_chunks):
         n0 = len(stats.history)
         tunnel.step(chunk, stats=stats)
@@ -309,12 +318,17 @@ def converge(tunnel: Tunnel, stats: RunStats, chunk: int, min_chunks: int, max_c
         if progress:
             progress(c + 1, max_chunks, chunk_means[-1][0] / qA)
         if c + 1 >= min_chunks and len(chunk_means) >= avg_chunks:
-            m = np.mean(chunk_means[-avg_chunks:], axis=0)[0] / qA
+            w = window()
+            m = w.mean(axis=0)[0] / qA
             means.append(m)
-            if len(means) >= 2 and abs(means[-1] - means[-2]) <= tol * max(abs(means[-1]), 1e-6):
+            settled = len(means) >= 2 and abs(means[-1] - means[-2]) <= tol * max(abs(m), 1e-6)
+            if settled and se_tol is not None and len(w) > 1:
+                se = w[:, 0].std(ddof=1) / qA / math.sqrt(len(w))
+                settled = se <= se_tol * max(abs(m), 1e-6)
+            if settled:
                 converged = True
                 break
-    window = np.array(chunk_means[-avg_chunks:])
-    F = window.mean(axis=0)
-    cd_std = float(window[:, 0].std() / qA) if len(window) > 1 else 0.0
+    w = window()
+    F = w.mean(axis=0)
+    cd_std = float(w[:, 0].std() / qA) if len(w) > 1 else 0.0
     return converged, F, cd_std

@@ -40,9 +40,11 @@ FEATURES = {
         "title": "Nose cone", "kind": "add", "icon": "rocket", "region": False,
         "help": "A new nose on the front of a body: profile family, length and diameter. Click where its base sits.",
         "params": [
+            Param("section", "Cross-section", "shape", "choice", default="round", choices=[("round", "Round"), ("match", "Follow the body's own section")],
+                  help="Round, or the body's own cross-section where the feature starts (a car's rear, a box-shaped frame), tapered."),
             Param("family", "Profile", "shape", "choice", default="ogive", choices=NOSE_FAMILIES),
             Param("length", "Length", "shape", "m", 0.002, 50.0, 0.1, locked=False, help="Tip to base."),
-            Param("diameter", "Base diameter", "shape", "m", 0.001, 20.0, 0.05),
+            Param("diameter", "Base diameter", "shape", "m", 0.001, 20.0, 0.05, show_if={"section": ["round"]}),
             Param("tip_radius", "Tip radius", "shape", "m", 0.0, 5.0, 0.0, help="Spherical blunting tangent to the profile."),
             Param("power", "Power-law exponent", "shape", "-", 0.25, 1.0, 0.6, show_if={"family": ["power"]}),
             Param("haack_c", "Haack C", "shape", "-", 0.0, 0.34, 0.0, show_if={"family": ["haack"]}),
@@ -54,10 +56,12 @@ FEATURES = {
         "title": "Tail cone", "kind": "add", "icon": "rocket", "region": False,
         "help": "A boat-tail or cone on the back of a body, tapering from the base diameter. Click where it starts.",
         "params": [
+            Param("section", "Cross-section", "shape", "choice", default="round", choices=[("round", "Round"), ("match", "Follow the body's own section")],
+                  help="Round, or the body's own cross-section where the feature starts (a car's rear, a box-shaped frame), tapered."),
             Param("shape", "Shape", "shape", "choice", default="smooth", choices=[("smooth", "Smooth (tangent)"), ("conical", "Conical")]),
             Param("length", "Length", "shape", "m", 0.002, 50.0, 0.1, locked=False),
-            Param("diameter", "Start diameter", "shape", "m", 0.001, 20.0, 0.05),
-            Param("end_ratio", "End / start diameter", "shape", "ratio", 0.0, 1.0, 0.4, locked=False,
+            Param("diameter", "Start diameter", "shape", "m", 0.001, 20.0, 0.05, show_if={"section": ["round"]}),
+            Param("end_ratio", "End / start size", "shape", "ratio", 0.0, 1.0, 0.4, locked=False,
                   help="0 ends in a point; 1 is a straight extension."),
             Param("overlap", "Overlap into the body", "fit", "m", 0.0, 10.0, 0.01),
         ],
@@ -248,6 +252,10 @@ def clean(f):
     out = {"id": str(f.get("id") or uuid.uuid4().hex[:8])[:16], "type": f["type"], "name": str(f.get("name") or d["title"])[:60],
            "enabled": f.get("enabled", True) is not False, "center": _num3(f.get("center"), "feature position"),
            "values": vals, "params": params}
+    if f.get("optional"):
+        out["optional"] = True             # the optimizer tries the design with and without it
+    if f.get("why"):
+        out["why"] = str(f["why"])[:300]   # the reasoning behind an AI or generated idea
     if d["region"]:
         size = _num3(f.get("size"), "feature size")
         if min(size) <= 0:
@@ -312,6 +320,49 @@ def _place(mesh, c, R):
 
 
 # ---- builders: added shells ---------------------------------------------------------------------------
+def body_loop(mesh: Mesh, c, R, M=72):
+    """The body's own cross-section through c, square to the feature's x axis: the largest loop of
+    that slice, resampled to M points by arc length, counter-clockwise in local (y, z)."""
+    local = Mesh((mesh.v - c) @ R, mesh.f)
+    loops = section_loops(local, 0.0, points=True)
+    if not loops:
+        return None
+    pts = max(loops, key=lambda L: L[1])[5]
+    seg = np.linalg.norm(np.roll(pts, -1, 0) - pts, axis=1)
+    s = np.concatenate([[0.0], np.cumsum(seg)])
+    tgt = np.linspace(0.0, s[-1], M, endpoint=False)
+    closed = np.vstack([pts, pts[:1]])
+    out = np.stack([np.interp(tgt, s, closed[:, 0]), np.interp(tgt, s, closed[:, 1])], 1)
+    area = 0.5 * np.sum(out[:, 0] * np.roll(out[:, 1], -1) - np.roll(out[:, 0], -1) * out[:, 1])
+    return out if area > 0 else out[::-1]
+
+
+def _section_loft(loop, xs, scales):
+    """Closed shell through copies of a (y, z) loop at stations xs, scaled about its centre."""
+    cen = loop.mean(0)
+    rings = np.stack([np.column_stack([np.full(len(loop), x), cen + (loop - cen) * k]) for x, k in zip(xs, scales)])
+    return T.loft_rings(rings)
+
+
+def _extension(m, c, R, v, forward):
+    """Nose or tail that continues the body's own section: forward (-x) or aft (+x)."""
+    loop = body_loop(m, c, R)
+    if loop is None:
+        return None, ["the body has no closed section here to extend; use a round section"]
+    L = v["length"]
+    ov = max(v["overlap"], 1e-4 * L)
+    t = np.linspace(0.0, 1.0, 24)
+    if forward:                                   # rounded (elliptical) nose to a point
+        k = np.sqrt(np.clip(1.0 - t ** 2, 0.0, 1.0))
+        xs = np.concatenate([[ov], -t * L])
+        ks = np.concatenate([[1.0], k])
+    else:                                         # boat-tail taper to end_ratio
+        f = t if v["shape"] == "conical" else 3 * t * t - 2 * t ** 3
+        xs = np.concatenate([[-ov], t * L])
+        ks = np.concatenate([[1.0], 1.0 - (1.0 - v["end_ratio"]) * f])
+    return _section_loft(loop, xs, ks), []
+
+
 def _nosecone(v, n=48):
     L, Rb = v["length"], v["diameter"] / 2
     xs, rs, pr = T.nose_profile(v["family"], L, Rb, v["tip_radius"], 36, v["power"], v["haack_c"])
@@ -809,6 +860,8 @@ def apply(mesh: Mesh, features, frame: Frame, overrides=None):
     for f in features or []:
         if not f.get("enabled", True):
             continue
+        if (overrides or {}).get((f["id"], "_use")) == "off":
+            continue
         d = get(f["type"])
         v = dict(f["values"])
         for (fid, key), val in (overrides or {}).items():
@@ -817,7 +870,11 @@ def apply(mesh: Mesh, features, frame: Frame, overrides=None):
         c, R, half = placement(f, frame)
         name = f.get("name") or d["title"]
         try:
-            if f["type"] == "nosecone":
+            if f["type"] in ("nosecone", "tailcone") and v.get("section") == "match":
+                shell, pr = _extension(m, c, R, v, forward=f["type"] == "nosecone")
+                if shell is not None:
+                    shell = _place(shell, c, R)
+            elif f["type"] == "nosecone":
                 shell, pr = _nosecone(v)
                 shell = _place(shell, c, R)
             elif f["type"] == "tailcone":
@@ -873,8 +930,9 @@ def union_volume(mesh: Mesh, cells=160):
 
 
 # ---- sensible starting values where the user clicked ------------------------------------------------------
-def section_loops(mesh: Mesh, x0):
-    """Closed loops where the plane x = x0 cuts the surface: [(centre_yz, area, perimeter, lo_yz, hi_yz)]."""
+def section_loops(mesh: Mesh, x0, points=False):
+    """Closed loops where the plane x = x0 cuts the surface: [(centre_yz, area, perimeter, lo_yz, hi_yz)]
+    (with points=True, each loop's (y, z) points are appended)."""
     d = mesh.v[:, 0] - x0
     if np.any(np.abs(d) < 1e-12):
         d = d - 1e-9 * float(np.ptp(mesh.v[:, 0]) or 1.0)
@@ -918,7 +976,7 @@ def section_loops(mesh: Mesh, x0):
         p = pts[loop][:, 1:]
         area = abs(0.5 * np.sum(p[:, 0] * np.roll(p[:, 1], -1) - np.roll(p[:, 0], -1) * p[:, 1]))
         per = float(np.linalg.norm(p - np.roll(p, -1, 0), axis=1).sum())
-        out.append((p.mean(0), float(area), per, p.min(0), p.max(0)))
+        out.append((p.mean(0), float(area), per, p.min(0), p.max(0)) + ((p,) if points else ()))
     return out
 
 
@@ -1034,3 +1092,100 @@ def suggest(ftype, body: Mesh, frame: Frame, point_body=None, normal_body=None):
     if rot is not None:
         f["rotation"] = rot
     return clean(f)
+
+
+# ---- generative proposals: features the optimizer may add -----------------------------------------------
+IDEAS = {
+    # name: (what it is, the hints a design assistant may give, as fractions of the body)
+    "boat_tail": ("the body's own rear section continued and tapered", {"length": "x rear height, 0.3-1.2", "end": "end / start size, 0.45-0.9"}),
+    "rounded_front": ("a rounded front continuing the front section", {"length": "x front height, 0.08-0.6"}),
+    "rear_slant": ("the upper rear edge cut back (fastback / hatch angle)", {"angle": "degrees above horizontal, 20-70", "depth": "x body height, 0-0.25"}),
+    "rear_diffuser": ("the lower rear edge cut up (underbody diffuser)", {"angle": "degrees below horizontal, 20-70", "depth": "x body height, 0-0.2"}),
+}
+
+
+def _ends(body):
+    lo, hi = body.bbox()
+    L = float(hi[0] - lo[0])
+    secs = {}
+    for frac in (0.03, 0.5, 0.97):
+        loops = section_loops(body, lo[0] + frac * L)
+        secs[frac] = max(loops, key=lambda q: q[1]) if loops else None
+    full = max((q[1] for q in secs.values() if q), default=0.0)
+    return lo, hi, L, secs, full
+
+
+def idea(kind, body: Mesh, frame: Frame, hints=None, name=None):
+    """One generative idea as an optional feature (None if the body has no place for it). hints:
+    fractions of the body as in IDEAS, clamped to the ranges there."""
+    h_ = hints or {}
+    clamp = lambda k, d, lo_, hi_: float(min(max(float(h_.get(k, d)), lo_), hi_))
+    lo, hi, L, secs, full = _ends(body)
+
+    def make(ftype, label, center_body, values, free, normal=None):
+        f = suggest(ftype, body, frame, center_body, normal)
+        f["center"] = [round(float(x), 6) for x in (frame.R0.T @ (np.asarray(center_body, float) + frame.center)) / frame.scale]
+        f["name"] = name or label
+        f["values"].update(values)
+        f["optional"] = True
+        f["params"] = {p.key: {"locked": p.key not in free} for p in get(ftype)["params"]}
+        for k, (blo, bhi) in free.items():
+            f["params"][k]["bounds"] = [blo, bhi]
+        return clean(f)
+
+    if kind == "boat_tail":
+        rear = secs[0.97]
+        if not rear:
+            return None
+        h = float(max(rear[4] - rear[3]))
+        return make("tailcone", "Boat-tail (proposed)", [lo[0] + 0.97 * L, rear[0][0], rear[0][1]],
+                    {"section": "match", "shape": "smooth", "length": clamp("length", 0.8, 0.3, 1.2) * h,
+                     "end_ratio": clamp("end", 0.7, 0.45, 0.9), "overlap": 0.02 * L},
+                    {"length": (0.3 * h, 1.2 * h), "end_ratio": (0.45, 0.9)})
+    if kind == "rounded_front":
+        front = secs[0.03]
+        if not front:
+            return None
+        h = float(max(front[4] - front[3]))
+        return make("nosecone", "Rounded front (proposed)", [lo[0] + 0.03 * L, front[0][0], front[0][1]],
+                    {"section": "match", "length": clamp("length", 0.25, 0.08, 0.6) * h, "overlap": 0.02 * L},
+                    {"length": (0.08 * h, 0.6 * h)})
+    if kind in ("rear_slant", "rear_diffuser"):
+        hz = float(hi[2] - lo[2])
+        aft = body.v[body.v[:, 0] > lo[0] + 0.5 * L]
+        if len(aft) < 4:
+            return None
+        up = kind == "rear_slant"
+        elev = clamp("angle", 45.0, 20.0, 70.0) * (1 if up else -1)
+        dmax = 0.25 if up else 0.2
+        n = _plane_dir(elev, 0.0)
+        edge = aft[int(np.argmax(aft @ n))]
+        return make("slant", "Rear slant (proposed)" if up else "Rear diffuser (proposed)", edge,
+                    {"elevation": elev, "azimuth": 0.0, "depth": clamp("depth", 0.04, 0.0, dmax) * hz, "parts": "all"},
+                    {"depth": (0.0, dmax * hz), "elevation": (20.0, 70.0) if up else (-70.0, -20.0)}, n)
+    raise ValueError(f"unknown idea {kind!r}")
+
+
+def body_summary(body: Mesh):
+    """A few numbers that describe the body's shape, for a design assistant."""
+    lo, hi, L, secs, full = _ends(body)
+    size = hi - lo
+    frac = lambda q: round(q[1] / full, 3) if q and full else 0.0
+    return {"length_m": round(L, 4), "width_m": round(float(size[1]), 4), "height_m": round(float(size[2]), 4),
+            "fineness": round(L / max(float(size[1]), float(size[2]), 1e-9), 2),
+            "front_section_vs_max": frac(secs[0.03]), "rear_section_vs_max": frac(secs[0.97])}
+
+
+def propose(body: Mesh, frame: Frame):
+    """Shape features worth trying on this body, each optional (the optimizer screens the design with
+    and without it and keeps only those that beat the measured error), with its key dimensions free:
+    a boat-tail when the rear is blunt, a rounded front when the front is, and rear slant and
+    diffuser angles."""
+    lo, hi, L, secs, full = _ends(body)
+    kinds = []
+    if secs[0.97] and secs[0.97][1] > 0.05 * full:
+        kinds.append("boat_tail")
+    if secs[0.03] and secs[0.03][1] > 0.35 * full:
+        kinds.append("rounded_front")
+    kinds += ["rear_slant", "rear_diffuser"]
+    return [f for f in (idea(k, body, frame) for k in kinds) if f is not None]

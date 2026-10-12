@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-CODE_VERSION = "2026-10-06.1"
+CODE_VERSION = "2026-10-12.1"
 BUDGET_BYTES = 3 * 1024 ** 3
 
 

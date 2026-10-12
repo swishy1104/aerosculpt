@@ -651,10 +651,10 @@ export function windRotation(aoa = 0, yaw = 0) {
 
 /** File coordinates <-> body frame (metres, nose -x, z up, centred on the bounding box). */
 export class ModelFrame {
-  constructor(raw, { units, forward, up }) {
+  constructor(raw, { units, forward, up, unit_scale }) {
     const f = AXES[forward], u = AXES[up];
     this.R0 = [f.map((v) => -v), cross(u, f.map((v) => -v)), u];
-    this.s = UNIT_SCALE[units] || 1;
+    this.s = units === "custom" ? +unit_scale || 1 : UNIT_SCALE[units] || 1;
     const n = raw.length / 3;
     const body = new Float32Array(raw.length);
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
