@@ -22,10 +22,11 @@
       </div>
       <p class="tunnel-note" id="tunnel-note"></p>
     </div>
+    <div class="ready" id="ready" aria-live="polite"></div>
     <div class="sec" data-sec="model">
       <div class="sec-h"><span class="n">1</span><span class="t">Model</span><span class="s" id="s-model"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b">
-        <p class="lead">Your geometry and which way it flies. The blue arrow in the view is the airflow; the nose should face it.</p>
+        <p class="lead">Check the real size and which way the model points. The blue arrow in the view is the airflow: the nose should face it.</p>
         <div class="kv" id="model-kv" style="margin-bottom:14px"></div>
         <div id="model-axes">
         <label class="field"><span>File units</span>
@@ -54,7 +55,8 @@
     <div class="sec closed" data-sec="protect">
       <div class="sec-h"><span class="n">2</span><span class="t">Protect</span><span class="s" id="s-protect"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b">
-        <p class="lead">Mark what the optimizer must respect. Coordinates are in your model's own units.</p>
+        <p class="lead">Optional. Mark parts that must not change (<b>Protect</b>) or volumes that must stay inside (<b>Keep inside</b>).
+          To change one part, use a <b>Shape feature</b> instead of a Design-only region.</p>
         <div class="zone-add" id="zone-add"></div>
         <div id="zones" style="margin-top:12px"></div>
         <p class="small muted" id="zone-limit" style="margin:6px 0 0"></p>
@@ -74,7 +76,7 @@
     <div class="sec" data-sec="envelope" data-tunnels="general rc">
       <div class="sec-h"><span class="n">3</span><span class="t">Flight envelope</span><span class="s" id="s-envelope"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b">
-        <p class="lead">The airspeeds and angles of attack to test. Each angle is one CFD run; extra airspeeds come from the same run, so they are free.</p>
+        <p class="lead">How fast it flies and at what angles. Pick speeds it really flies at — each angle is one CFD run; extra speeds are free.</p>
         <span class="label">Airspeed (m/s)</span>
         <div class="range3">
           <label><span class="label muted">From</span><input type="number" id="speed_min" min="0.5" max="450" step="1"></label>
@@ -89,12 +91,14 @@
           <label><span class="label muted">Points</span><input type="number" id="aoa_count" min="1" step="1"></label>
         </div>
         <div class="range-preview" id="aoa-chips"></div>
-        <div class="two" style="margin-top:16px">
+        <details class="adv"><summary>More conditions <span class="muted">altitude, sideslip, reference area</span></summary>
+        <div class="two" style="margin-top:10px">
           <label class="field"><span>Altitude</span><div class="input-unit"><input type="number" id="altitude" min="-500" max="20000" step="100"><span class="unit">m</span></div></label>
           <label class="field"><span>Sideslip (yaw)</span><div class="input-unit"><input type="number" id="yaw" min="-30" max="30" step="0.5"><span class="unit">deg</span></div></label>
         </div>
         <label class="field"><span>Reference area for coefficients</span>
           <div class="input-unit"><input type="number" id="ref_area" min="0" step="any" placeholder="Auto: frontal area"><span class="unit">m²</span></div></label>
+        </details>
         <div class="kv" id="flow-kv"></div>
       </div>
     </div>
@@ -153,7 +157,7 @@
     <div class="sec" data-sec="simulate">
       <div class="sec-h"><span class="n">4</span><span class="t">Simulate</span><span class="s" id="s-simulate"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b">
-        <p class="lead">Run the virtual wind tunnel across the envelope: drag polar, lift curve, L/D and flow fields.</p>
+        <p class="lead">Test the design as it is: drag, lift and the flow around it at every speed and angle. Draft is quickest; higher fidelity is finer.</p>
         <div id="fid-block">
           <span class="label">Tunnel fidelity</span>
           <div class="seg" id="fidelity" style="width:100%;display:flex"></div>
@@ -168,21 +172,23 @@
     <div class="sec" data-sec="optimize">
       <div class="sec-h"><span class="n">5</span><span class="t">Optimize</span><span class="s" id="s-optimize"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b">
-        <p class="lead" id="opt-lead">Reshape the body to beat the baseline across the whole envelope, inside your protected regions and volume limits.</p>
+        <p class="lead" id="opt-lead">Let AeroSculpt try changes and keep only those that measurably lower drag. Add <b>Shape features</b> or
+          <b>Generate design ideas</b> (step 2) for new geometry; the options below bend the whole body.</p>
         <label class="field"><span>Goal</span><select id="objective"></select></label>
         <p class="small muted hidden" id="objective-note" style="margin:-4px 0 12px">Lift-based goals (best L/D, keep lift) are off until lift passes the
           <a href="/validation" target="_blank">solver validation</a>: on thin wings the simulated lift is currently 50–66% low.</p>
         <div id="opt-aspects">
         <span class="label">What may change <span class="muted" id="aspect-limit"></span></span>
         <div id="aspects"></div>
-        <label class="field" style="margin-top:12px"><span>Maximum shape change</span>
-          <div class="slider-row"><input type="range" id="max_change" min="5" max="50" step="1"><output id="max_change_o"></output></div></label>
         </div>
         <div id="opt-params" class="notice info hidden" style="margin:0 0 12px"></div>
-        <label class="field"><span>Optimize the most influential <span class="muted" id="topk-limit"></span></span>
-          <div class="slider-row"><input type="range" id="top_k" min="1" max="8" step="1"><output id="top_k_o"></output></div></label>
         <label class="field"><span>Design budget (designs to try at most)</span>
           <div class="slider-row"><input type="range" id="iterations" min="1" step="1"><output id="iterations_o"></output></div></label>
+        <details class="adv"><summary>Advanced <span class="muted">change size, parameters, volume</span></summary>
+        <label class="field" style="margin-top:10px" id="max-change-row"><span>Maximum shape change</span>
+          <div class="slider-row"><input type="range" id="max_change" min="5" max="50" step="1"><output id="max_change_o"></output></div></label>
+        <label class="field"><span>Optimize the most influential <span class="muted" id="topk-limit"></span></span>
+          <div class="slider-row"><input type="range" id="top_k" min="1" max="8" step="1"><output id="top_k_o"></output></div></label>
         <div class="two">
           <label class="field"><span>Keep volume at least</span><div class="slider-row"><input type="range" id="min_volume" min="50" max="100" step="1"><output id="min_volume_o"></output></div></label>
           <label class="field"><span>Allow volume up to</span><div class="slider-row"><input type="range" id="max_volume" min="100" max="200" step="5"><output id="max_volume_o"></output></div></label>
@@ -203,6 +209,7 @@
         <label class="check hidden" id="respect-row" style="margin:4px 0 12px"><input type="checkbox" id="respect_limits">
           <span>Respect material temperature limits <span class="muted">(designs that overheat are penalised)</span></span></label>
         <label class="field" id="verify-row"><span>Re-check the winner at</span><select id="verify"></select></label>
+        </details>
         <button class="btn primary block" id="run-optimize" type="button"></button>
         <div class="est" id="optimize-est"></div>
       </div>
@@ -259,6 +266,7 @@
     <div class="vp-info" id="vp-info"></div>
     <div class="run-card hidden" id="run-card" role="status" aria-live="polite"></div>
     <div class="vp-cond hidden" id="vp-cond"></div>
+    <button class="right-open hidden" type="button" id="right-open" title="Show the results panel"><span data-i="chart"></span><span>Results</span></button>
     <div class="vp-corner"><div class="colorbar hidden" id="colorbar"><div class="t"></div><div class="bar"></div><div class="ticks"></div></div></div>
   </section>
 
@@ -267,6 +275,8 @@
       <button class="tab on" data-tab="results">Performance</button>
       <button class="tab" data-tab="history">Optimization</button>
       <button class="tab" data-tab="runs">Runs</button>
+      <span class="grow"></span>
+      <button class="icon-btn" type="button" id="right-collapse" title="Hide the results panel" aria-label="Hide the results panel"><span data-i="chev"></span></button>
     </div>
     <div id="tab-results" style="padding:16px"></div>
     <div id="tab-history" class="hidden" style="padding:16px"></div>

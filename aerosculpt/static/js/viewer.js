@@ -20,6 +20,11 @@ export class Viewer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
+    // drag: turn · scroll wheel held down (or right button): slide · wheel or pinch: zoom
+    this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.PAN };
+    this.controls.screenSpacePanning = true;
+    // two-finger scroll on a trackpad slides the model; a mouse wheel and a pinch still zoom
+    this.renderer.domElement.addEventListener("wheel", (e) => this._wheel(e), { capture: true, passive: false });
     this.hemi = new THREE.HemisphereLight(0xdfe9ff, 0x1a1f28, 1.1);
     const d1 = new THREE.DirectionalLight(0xffffff, 1.6);
     d1.position.set(-2, -3, 4);
@@ -49,6 +54,26 @@ export class Viewer {
     this.resize();
     this._loop = this._loop.bind(this);
     requestAnimationFrame(this._loop);
+  }
+
+  /** Trackpad two-finger scroll -> slide; a pinch (ctrl + wheel) and a mouse wheel's notches -> zoom
+   *  (left to OrbitControls). Trackpads send small, often fractional deltas and sideways ones;
+   *  a wheel sends whole notches of ~100 px straight up or down. */
+  _wheel(e) {
+    if (e.ctrlKey || e.deltaMode !== 0) return;
+    const ax = Math.abs(e.deltaX), ay = Math.abs(e.deltaY);
+    if (ax === 0 && ay >= 50 && Number.isInteger(e.deltaY)) return;     // a wheel notch: zoom
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const el = this.renderer.domElement;
+    const dist = this.camera.position.distanceTo(this.controls.target);
+    const k = (2 * dist * Math.tan((this.camera.fov * Math.PI) / 360)) / (el.clientHeight || 1);
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 1);
+    const move = right.multiplyScalar(e.deltaX * k).add(up.multiplyScalar(-e.deltaY * k));
+    this.camera.position.add(move);
+    this.controls.target.add(move);
+    this.controls.update();
   }
 
   resize() {

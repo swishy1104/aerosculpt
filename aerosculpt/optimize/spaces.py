@@ -172,14 +172,26 @@ class DeformSpace:
         self.base_planform = projected_area(self.base.mesh, 2)
         self.base_closed, _ = checks.closed_shells(self.base.mesh)
         self.base_check = checks.check(self.base.mesh)
+        # the optimizer screens thousands of would-be designs for size and volume before choosing one:
+        # on a large mesh it does that on a light stand-in with the same deformation fields
+        self.proxy = None
+        if deformer.base.n_faces > 60_000 and self.base_closed:
+            from ..geometry.ffd import Deformer
+            from ..geometry.repair import solidify
+            try:
+                pm, _ = solidify(deformer.base, cells=70, gap=1, smooth=2)
+                self.proxy = Deformer(pm, deformer.variables, deformer.zones)
+            except ValueError:
+                self.proxy = None
 
     def build(self, values, preview=False) -> Candidate:
         vals = dict(self.base_values)
         vals.update(values or {})
-        mesh = self.dfm.apply(np.array([vals[v.key] for v in self.vars]))
+        dfm = self.proxy if preview and self.proxy is not None else self.dfm
+        mesh = dfm.apply(np.array([vals[v.key] for v in self.vars]))
         lo, hi = mesh.bbox()
         info = {"overall_length": float(hi[0] - lo[0]), "overall_width": float(hi[1] - lo[1]),
-                "overall_height": float(hi[2] - lo[2]), "volume_ratio": self.dfm.volume_ratio(mesh)}
+                "overall_height": float(hi[2] - lo[2]), "volume_ratio": dfm.volume_ratio(mesh)}
         return Candidate(vals, mesh, None, None, info, None)
 
     def fast_check(self, cand: Candidate):

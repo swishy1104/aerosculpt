@@ -296,6 +296,15 @@ class Search:
                 cand = build_at(x)
                 why = sp.full_check(cand)
                 if why:
+                    # the change may be fine at a smaller size: back off towards the current best
+                    x_inc = values_to_unit(sp, sel, incumbent["cand"].values)
+                    for frac in (0.5, 0.25):
+                        x2 = x_inc + frac * (np.asarray(x) - x_inc)
+                        c2 = build_at(x2)
+                        if sp.full_check(c2) is None:
+                            x, cand, why, how = x2, c2, None, how + ", scaled back"
+                            break
+                if why:
                     bad.append(np.asarray(x))
                     n_rej += 1
                     self.rejected += 1

@@ -202,6 +202,7 @@ function modelInfo() {
     (${sig(m.solidified.cell * 1000, 3)} file-unit grid).</p>` : "";
   $("#s-model").textContent = `${S.units === "custom" ? "real size" : S.units} · nose ${S.forward.toUpperCase()}`;
   syncRealLen();
+  renderReady();
 }
 
 let saveTimer;
@@ -210,7 +211,7 @@ function saveSettings() {
   saveTimer = setTimeout(async () => {
     try {
       project = await api(`/api/projects/${pid}`, { method: "PATCH", body: { settings: {
-        units: S.units, ...(S.units === "custom" ? { unit_scale: S.unit_scale } : {}), forward: S.forward, up: S.up, envelope: S.envelope, zones: S.zones, features: S.features || [],
+        units: S.units, ...(S.units === "custom" ? { unit_scale: S.unit_scale } : {}), size_ok: !!S.size_ok, forward: S.forward, up: S.up, envelope: S.envelope, zones: S.zones, features: S.features || [],
         tunnel, propellers: S.propellers, hyper: S.hyper, optimize: opt, fidelity,
         ...(S.template ? { template: { values: S.template.values, params: S.template.params } } : {}) } } });
       if (S.template) {
@@ -239,6 +240,7 @@ $("#units").addEventListener("change", (e) => {
   }
   S.units = e.target.value;
   syncRealLen();
+  renderReady();
   onGeomSetting();
   viewer.view("iso");
   if (S.units === "custom") $("#real_len").focus();
@@ -247,6 +249,7 @@ $("#real_len").addEventListener("change", (e) => {
   const L = +e.target.value, r = rawLength();
   if (!(L > 0) || !(r > 0)) return toast("Type the real length in metres.", "bad");
   S.unit_scale = L / r;
+  S.size_ok = true;
   onGeomSetting();
   viewer.view("iso");
 });
@@ -776,6 +779,7 @@ $("#hold_wing_area").addEventListener("change", (e) => { opt.hold_wing_area = e.
 function renderOptMode() {
   const tm = S.template;
   $("#opt-aspects").classList.toggle("hidden", !!tm);
+  $("#max-change-row").classList.toggle("hidden", !!tm);
   $("#opt-params").classList.toggle("hidden", !tm);
   $("#opt-wing").classList.toggle("hidden", !(winged() && tunnel !== "supersonic"));
   $("#wingarea-row").classList.toggle("hidden", !!tm);
@@ -850,7 +854,76 @@ function hyperEstimates() {
   summaries();
 }
 
+// ---- "before you run": what makes a simulation clean, each with a one-click fix ----------------------------------
+function openSection(name) {
+  const sec = $(`[data-sec="${name}"]`);
+  if (!sec) return;
+  sec.classList.remove("closed");
+  sec.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function openRealLength() {
+  openSection("model");
+  $("#units").value = "custom";
+  $("#units").dispatchEvent(new Event("change"));
+}
+function readyChecks() {
+  const out = [];
+  if (!frame) return out;
+  const m = project.metrics || {};
+  const L = frame.size;
+  if (!S.template && !m.watertight) {
+    out.push({ s: "bad", t: `<b>Not a solid.</b> ${fmtInt(m.shells)} separate pieces with ${fmtInt(m.open_edges)} open edges: air leaks through the gaps, so drag jumps from run to run.`,
+      fix: [["Make a solid copy", () => { openSection("model"); const b = $("#make-solid"); if (b) b.click(); }]] });
+  } else out.push({ s: "ok", t: "One solid, watertight body." });
+  if (!S.template) {
+    const len = Math.max(...L);
+    const odd = len < 0.15 || len > 40;
+    const size = `${lenStr(L[0])} long × ${lenStr(L[1])} × ${lenStr(L[2])}`;
+    if (S.size_ok && !odd) out.push({ s: "ok", t: `Real size ${size}.` });
+    else out.push({ s: odd ? "warn" : "tip", t: `<b>Is this the real size?</b> ${size}${odd ? " — that looks unusual for a real vehicle" : ""}. Drag depends on true size and speed.`,
+      fix: [["Yes, that's right", () => { S.size_ok = true; saveSettings(); renderReady(); }], ["Set the real length", openRealLength]] });
+  }
+  if (tunnel !== "supersonic") {
+    const env = S.envelope;
+    const nu = isa(env.altitude).nu;
+    const reMin = env.speed_min * L[0] / nu;
+    const lo = Math.max(1, Math.round(env.speed_max * 0.4));
+    if (env.speed_count > 1 && env.speed_min < 0.25 * env.speed_max) {
+      out.push({ s: "warn", t: `<b>${sig(env.speed_min, 3)}–${sig(env.speed_max, 3)} m/s:</b> the low end is almost standing still, so the results average two very different flows.`,
+        fix: [[`Use ${lo}–${sig(env.speed_max, 3)} m/s`, () => { const inp = $("#speed_min"); inp.value = lo; inp.dispatchEvent(new Event("change")); }]] });
+    } else if (reMin < 2e4) {
+      out.push({ s: "warn", t: `<b>Very slow for this size</b> (Reynolds number ${reMin.toExponential(1)}): the flow is sticky and laminar, unlike real flight. Check the real size and speed.` });
+    } else out.push({ s: "ok", t: `Speeds ${sig(env.speed_min, 3)}–${sig(env.speed_max, 3)} m/s, ${env.aoa_count} angle${env.aoa_count > 1 ? "s" : ""}.` });
+  }
+  if (!S.template && S.zones.some((z) => z.type === "design")) {
+    out.push({ s: "warn", t: "<b>Design-only regions</b> squeeze whole-body changes into small zones, which fold where they fade out. To change one part, use a Shape feature instead.",
+      fix: [["Open shape features", () => openSection("features")]] });
+  }
+  if (!S.template && !(S.features || []).some((f) => f.enabled !== false)) {
+    out.push({ s: "tip", t: "For new geometry — a boat-tail, a rounded front, slants — let AeroSculpt propose it.",
+      fix: [["Generate design ideas", () => { openSection("features"); const b = $("#ft-generate"); if (b) b.click(); }]] });
+  }
+  return out;
+}
+const READY_ICON = { ok: "check", warn: "alert", bad: "alert", tip: "sparkles" };
+function renderReady() {
+  const box = $("#ready");
+  if (!box) return;
+  const checks = readyChecks();
+  if (!checks.length) { box.innerHTML = ""; return; }
+  const issues = checks.filter((c) => c.s === "bad" || c.s === "warn").length;
+  box.classList.toggle("all-ok", !issues);
+  box.innerHTML = `<div class="rh">${icon(issues ? "alert" : "check")}<span>${issues ? `Before you run · ${issues} thing${issues > 1 ? "s" : ""} to check` : "Ready to run"}</span>
+      <span class="grow"></span><button class="icon-btn" type="button" id="ready-hide" title="Hide">${icon("x", "i sm")}</button></div>
+    <p class="steps">Model → shape changes → flight conditions → Simulate → Optimize</p>
+    <ul>${checks.map((c, i) => `<li class="${c.s}">${icon(READY_ICON[c.s])}<div>${c.t}${c.fix && c.fix.length ? `<div class="fix">${c.fix.map((f, j) =>
+      `<button class="btn sm${j === 0 ? " primary" : ""}" type="button" data-fix="${i}:${j}">${esc(f[0])}</button>`).join("")}</div>` : ""}</div></li>`).join("")}</ul>`;
+  $$("[data-fix]", box).forEach((b) => b.addEventListener("click", () => { const [i, j] = b.dataset.fix.split(":").map(Number); checks[i].fix[j][1](); }));
+  $("#ready-hide").addEventListener("click", () => { box.classList.add("hidden"); });
+}
+
 function summaries() {
+  renderReady();
   if (tunnel === "supersonic") {
     $("#s-protect").textContent = S.zones.length ? `${S.zones.length} region${S.zones.length > 1 ? "s" : ""}` : "none";
     $("#s-simulate").textContent = "Panel";
@@ -1040,6 +1113,15 @@ $("#st-cancel").addEventListener("click", async () => {
 });
 $("#st-log").addEventListener("click", () => $("#log").classList.toggle("hidden"));
 $("#st-results").addEventListener("click", () => $("#main").classList.toggle("show-right"));
+// the results panel folds away for a bigger 3D view (remembered per browser)
+function setRightCollapsed(on) {
+  $("#main").classList.toggle("right-collapsed", on);
+  $("#right-open").classList.toggle("hidden", !on);
+  try { localStorage.setItem("as.rightCollapsed", on ? "1" : "0"); } catch (e) { /* private mode */ }
+}
+$("#right-collapse").addEventListener("click", () => setRightCollapsed(true));
+$("#right-open").addEventListener("click", () => setRightCollapsed(false));
+try { if (localStorage.getItem("as.rightCollapsed") === "1") setRightCollapsed(true); } catch (e) { /* private mode */ }
 const narrow = matchMedia("(max-width: 1050px)");
 const syncNarrow = () => $("#st-results").classList.toggle("hidden", !narrow.matches);
 narrow.addEventListener("change", syncNarrow);
@@ -1526,6 +1608,19 @@ function renderHistoryTab() {
     <div class="small muted" style="margin:4px 0 12px">${r.objective === "ld" ? "change in best L/D" : fixedLift ? `drag at the lift needed, averaged over ${env.speeds.length} speed${env.speeds.length > 1 ? "s" : ""}`
       : "average change in drag across all " + env.aoas.length * env.speeds.length + " conditions"}
       ${st ? ` · ${st.designs_explored} designs explored` : ` · best design #${r.best_index} of ${r.history.length - 1}`}${r.verified ? ` · confirmed at ${esc(r.verified.fidelity)} fidelity` : ""}</div>
+    ${!noReliable && good ? (() => {
+      const changed = (r.variables || []).filter((v) => {
+        const b = v.base, x = r.best_values[v.key];
+        return v.choices ? String(x) !== String(b) : Math.abs((x ?? b) - b) > 1e-6 * Math.max(1, Math.abs(b));
+      }).map((v) => {
+        const x = r.best_values[v.key];
+        if (v.choices) return `${esc(v.label)}: <b>${esc(String(x))}</b>`;
+        if (v.unit === "ratio" && !v.key.startsWith("F.")) return `${esc(v.label)} <b>${fmtPct(x - v.base, 0, true)}</b>`;
+        return `${esc(v.label)} <b>${sig(x, 3)}</b> <span class="muted">(was ${sig(v.base, 3)})</span>`;
+      });
+      return changed.length ? `<div class="notice good" style="margin-bottom:12px">${icon("check")}<div><b style="color:var(--text)">Changes kept, confirmed by the finer check:</b>
+        ${changed.join(" · ")}. Switch between <b>Baseline</b>, <b>Optimized</b> and <b>Overlay</b> above the 3D view to see them.</div></div>` : "";
+    })() : ""}
     ${noReliable ? `<div class="notice warn" style="margin-bottom:12px">${icon("alert")}<div><b style="color:var(--text)">No reliable improvement.</b> No candidate beat the
       original design by more than the solver's measured error (${fmtPct(st.epsilon, 2)})${st.confirmed ? " once checked at full resolution" : ""}, so the original is kept.
       Unlock other parameters, widen their ranges, or raise the budget.</div></div>

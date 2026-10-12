@@ -1054,6 +1054,8 @@ def _clean_settings(data, old):
         if data["units"] not in ("mm", "cm", "m", "in", "ft", "custom"):
             err(400, "Unknown unit.")
         st["units"] = data["units"]
+    if "size_ok" in data:
+        st["size_ok"] = bool(data["size_ok"])           # the user confirmed the model's real size
     if "unit_scale" in data:
         v = _num(data["unit_scale"], "model scale")
         if not (1e-7 < v < 1e4):
