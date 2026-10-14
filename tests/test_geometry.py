@@ -195,3 +195,16 @@ def test_symmetry_detection():
         m = SAMPLES[name]["build"]()
         lo, hi = m.bbox()
         assert is_z_symmetric(m.transformed(t=-(lo + hi) / 2)) is expected, name
+
+
+def test_parallel_self_intersection_check_on_a_large_mesh():
+    from aerosculpt.geometry import checks
+    from aerosculpt.geometry.mesh import Mesh
+    from aerosculpt.geometry.samples import icosphere
+    m = icosphere(0.5, 6)                                   # 81,920 faces: the parallel sweep
+    assert m.n_faces > 20_000 and checks.self_intersections(m, 1) == 0
+    v = m.v.copy()
+    cap = v[:, 2] > 0.3
+    v[cap] += [0.013, 0.007, -0.87]                          # push the top cap down through the bottom (off-axis:
+    # the icosphere is mirror-symmetric, so a straight drop puts every crossing exactly on an edge)
+    assert checks.self_intersections(Mesh(v, m.f), 1) == 1

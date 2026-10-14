@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 from .mesh import Mesh
 
@@ -83,6 +83,37 @@ def _count(tri, f, comp, order, lo, hi, limit):
     return hits
 
 
+@njit(cache=True, parallel=True)
+def _hits_per_face(tri, f, comp, order, lo, hi):
+    """_count's sweep, every face in parallel: intersecting partners found per face."""
+    n = tri.shape[0]
+    out = np.zeros(n, np.int64)
+    for ii in prange(n):
+        i = order[ii]
+        h = 0
+        for jj in range(ii + 1, n):
+            j = order[jj]
+            if lo[j, 0] > hi[i, 0]:
+                break
+            if comp[i] != comp[j]:
+                continue
+            if lo[j, 1] > hi[i, 1] or hi[j, 1] < lo[i, 1] or lo[j, 2] > hi[i, 2] or hi[j, 2] < lo[i, 2]:
+                continue
+            shared = False
+            for a in range(3):
+                for b in range(3):
+                    if f[i, a] == f[j, b]:
+                        shared = True
+            if shared:
+                continue
+            for k in range(3):
+                if _seg_tri(tri[i, k], tri[i, (k + 1) % 3], tri[j, 0], tri[j, 1], tri[j, 2]) or                         _seg_tri(tri[j, k], tri[j, (k + 1) % 3], tri[i, 0], tri[i, 1], tri[i, 2]):
+                    h += 1
+                    break
+        out[ii] = h
+    return out
+
+
 def self_intersections(mesh: Mesh, limit=1):
     """Number of intersecting face pairs within the same shell (stops counting at `limit`)."""
     tri = np.ascontiguousarray(mesh.triangles())
@@ -90,7 +121,10 @@ def self_intersections(mesh: Mesh, limit=1):
     lo = tri.min(axis=1)
     hi = tri.max(axis=1)
     order = np.argsort(lo[:, 0], kind="stable").astype(np.int64)
-    return int(_count(tri, np.ascontiguousarray(mesh.f), comp, order, lo, hi, int(limit)))
+    if len(tri) < 20_000:
+        return int(_count(tri, np.ascontiguousarray(mesh.f), comp, order, lo, hi, int(limit)))
+    # large meshes: valid designs (no hits) scan every pair anyway, so spread the sweep over all cores
+    return int(min(int(limit), _hits_per_face(tri, np.ascontiguousarray(mesh.f), comp, order, lo, hi).sum()))
 
 
 def check(mesh: Mesh):
