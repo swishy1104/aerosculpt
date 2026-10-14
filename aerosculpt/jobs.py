@@ -184,6 +184,8 @@ def run_job(job):
     else:
         credits = math.ceil(sum(n * CREDITS_PER_RUN.get(f, 1) for f, n in runner.runs_by_fid.items()))
         credits += getattr(runner, "model_credits", 0)     # wing-model designs: one credit per ten
+    if job["estimated_credits"]:
+        credits = min(credits, int(job["estimated_credits"]))   # the quote is "up to": never charge more
     with db() as con:
         con.execute("""UPDATE jobs SET status=?, error=?, finished_at=?, progress=CASE WHEN ?='done' THEN 1 ELSE progress END,
                        stage=?, summary=?, cfd_runs=?, credits_used=? WHERE id=?""",

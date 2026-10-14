@@ -305,6 +305,7 @@ def optimize(r):
         fid_x = dataclasses.replace(fid_full, u_lat=fid_x.u_lat) if fid_x.u_lat < fid_full.u_lat else fid_full
         r.log(f"the body is only {thin:.1f} cells across on the {EXPLORE_FID.get(fid_full.name)} grid: exploring on {fid_full.name}")
         ev_x = r.make_evaluator(lo, hi, fid_x)
+        ev_x.bill_as = EXPLORE_FID.get(fid_full.name, "coarse")     # charged as the exploration level the quote used
     # confirmation runs on a different grid from exploration, so a shape that only wins through the
     # exploration grid's error is caught. When exploration had to move onto the chosen grid, confirm
     # on a finer version of it (charged as the chosen level).

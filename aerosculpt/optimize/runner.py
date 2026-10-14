@@ -341,7 +341,8 @@ class Runner:
             self.cached_runs = getattr(self, "cached_runs", 0) + 1
             return
         self.cfd_runs += 1
-        self.runs_by_fid[ev.fid.name] = self.runs_by_fid.get(ev.fid.name, 0) + 1
+        bill = getattr(ev, "bill_as", None) or ev.fid.name
+        self.runs_by_fid[bill] = self.runs_by_fid.get(bill, 0) + 1
 
     def run_for(self, aoa, i_speed):
         """The run behind envelope angle `aoa` and speed index `i_speed` of the last design."""

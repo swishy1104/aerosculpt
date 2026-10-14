@@ -204,8 +204,10 @@ def test_automatic_optimization_end_to_end(tmp_path, monkeypatch):
             "optimize": {"objective": "drag", "aspects": ["tail", "nose", "section"], "iterations": 40, "max_change": 0.25,
                          "min_volume": 0.9, "max_volume": 1.5, "verify": None, "seed": 7, "top_k": 3,
                          "mode": "auto", "auto_ideas": True}}
-    res = Runner(spec, tmp_path / "pod.stl", "pod.stl", tmp_path / "out").run()
+    r = Runner(spec, tmp_path / "pod.stl", "pod.stl", tmp_path / "out")
+    res = r.run()
     st = res["strategy"]
+    assert set(r.runs_by_fid) == {"coarse", "draft"}         # billed as quoted: exploration coarse, confirmation draft
     assert st["confirm_grid"] == "standard" and st["confirm"] == "draft"
     assert res["rounds"] and res["rounds"][0]["round"] == 1
     assert st["reliable"] and res["improvement"] > 0.01                       # a narrower box is less drag here
