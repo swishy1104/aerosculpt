@@ -78,8 +78,13 @@
     of the 3D view to move between conditions.</p>
 
   <h2 id="optimize">5. Optimize</h2>
-  <p>Choose the goal, what may change, how many parameters to optimize and a design budget. Every design is scored against your original at every
-    (angle, speed) condition, so the winner is better across the envelope, not just at one point. Runs are spent in four steps:</p>
+  <p>Choose a goal and how hard to search (Quick, Balanced or Thorough), then press Optimize. By default AeroSculpt decides what to change: every
+    whole-body change your plan allows (nose, tail, cross-section, length, camber, edges) plus new geometry it designs itself — a boat-tail, a rounded
+    front, a rear slant, a rear diffuser angle. It keeps only what the wind tunnel confirms, then designs new ideas on the improved shape and tests
+    those, round after round, until a round finds nothing more. Protected regions and your limits always hold. Under <i>Show advanced options</i> you
+    can instead pick the changes yourself, add shape features, set the exact budget and the volume and size limits.</p>
+  <p>Every design is scored against your original at every (angle, speed) condition, so the winner is better across the envelope, not just at one
+    point. Each round spends its runs in four steps:</p>
   <ol>
     <li><b>Measure the error.</b> The original is re-run shifted by part of a grid cell. The scatter is the solver's run-to-run error for this body on this grid;
       a change is only accepted when it beats twice that (or 0.2–0.4% for the deterministic models).</li>
@@ -88,8 +93,10 @@
     <li><b>Search.</b> A Gaussian-process model of the objective chooses each next design by expected improvement. It stops at the budget, or when several
       designs in a row bring no gain larger than the error.</li>
     <li><b>Confirm.</b> The best candidates and the original are re-run one level up — CFD bodies explore on a coarser grid and confirm at the fidelity you
-      chose; wings explore on a coarse wing model and confirm at full resolution. If the gain does not survive by more than the error, the result says
-      <i>no reliable improvement</i> and keeps your original.</li>
+      chose (a body too small for the coarser grid explores at your fidelity and confirms one level finer, at no extra credits); wings explore on a coarse
+      wing model and confirm at full resolution. Each candidate is also re-run at both grid shifts of the error probe and must win at every one: a shape
+      that only wins where the grid happens to fall is exploiting the grid, not the air. If the gain does not survive by more than the error, the result
+      says <i>no reliable improvement</i> and keeps your original.</li>
   </ol>
   <p>Every candidate is checked before it costs a run: your size and wall limits, the volume range, keep-inside and protected regions, a watertight surface
     with no part passing through itself, and for winged designs stall and stability. Identical cases are never run twice (results are cached by a hash of
@@ -97,11 +104,13 @@
     every processor core.</p>
   <table class="tbl"><thead><tr><th>Goal</th><th>Scores each design by</th></tr></thead><tbody>
     <tr><td>Minimize drag across the envelope</td><td>average of drag ÷ original drag over all conditions</td></tr>
-    <tr><td class="muted">Maximize best L/D</td><td class="muted">the highest L/D anywhere in the envelope — <i>switched off until lift passes validation</i></td></tr>
-    <tr><td class="muted">Minimize drag, keep lift</td><td class="muted">average drag ratio, penalised wherever lift falls below the original — <i>switched off until lift passes validation</i></td></tr>
+    <tr><td>Best lift-to-drag ratio (L/D)</td><td>the highest L/D anywhere in the envelope — <i>indicative</i></td></tr>
+    <tr><td>Lowest drag, keeping the lift</td><td>average drag ratio, penalised wherever lift falls below the original — <i>indicative</i></td></tr>
   </tbody></table>
-  <p>An optimizer finds whatever the solver rewards. If the solver's lift is wrong, an L/D optimizer finds shapes that exploit the error rather than
-    shapes that fly better, so the lift-based goals stay off until the wing case on the <a href="/validation">validation page</a> passes.</p>
+  <p>An optimizer finds whatever the solver rewards. The tunnel's lift still reads low on thin wings (see the <a href="/validation">validation page</a>),
+    so the lift-based goals are marked <i>indicative</i>: use them to compare designs, not to size a wing from the lift numbers. Lift needs two or more
+    angles of attack — at a single angle a body may make almost no lift. Results show lift against drag (the drag polar, one point per angle) and lift
+    and drag force against airspeed.</p>
   <table class="tbl" style="margin-top:14px"><thead><tr><th>Aspect</th><th>What changes</th></tr></thead><tbody>
     <tr><td>Nose / forebody</td><td>Cross-section of the front third, sharper or fuller</td></tr>
     <tr><td>Tail / aft-body</td><td>Boat-tail taper of the rear third (base drag)</td></tr>
@@ -262,7 +271,7 @@
       simulated). No heat transfer in the General tunnel; propellers in the RC tunnel only.</li>
     <li>Boundary-layer transition is not predicted; very streamlined bodies at high Reynolds number come out conservative.</li>
     <li><b>Lift on thin wings is under-predicted by 50–66%</b> (NACA 0012 wing, aspect ratio 6, against lifting-line theory). The tunnel resolves the boundary layer too coarsely,
-      so it separates early on the suction side. Lift, L/D and pitching moment are indicative only, and lift-based optimization goals are switched off until this is fixed.</li>
+      so it separates early on the suction side. Lift, L/D and pitching moment are indicative only, and the lift-based optimization goals are marked indicative until this is fixed.</li>
     <li>Uniform grids under-resolve features much thinner than a cell; wings and fins thinner than about two cells are represented as one-cell walls.</li>
     <li>Results are engineering estimates. Validate safety-critical designs with independent analysis or testing.</li>
   </ul>

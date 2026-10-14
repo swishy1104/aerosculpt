@@ -23,6 +23,8 @@
       <p class="tunnel-note" id="tunnel-note"></p>
     </div>
     <div class="ready" id="ready" aria-live="polite"></div>
+    <label class="adv-switch"><input type="checkbox" id="adv-toggle"><span class="sw" aria-hidden="true"></span>
+      <span>Show advanced options</span><span class="muted small" id="adv-hint">shape features, what may change, limits</span></label>
     <div class="sec" data-sec="model">
       <div class="sec-h"><span class="n">1</span><span class="t">Model</span><span class="s" id="s-model"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b">
@@ -47,7 +49,7 @@
       <div class="sec-b" id="params-box"></div>
     </div>
 
-    <div class="sec closed" data-sec="features">
+    <div class="sec closed adv-only" data-sec="features">
       <div class="sec-h"><span class="n"></span><span class="t">Shape features</span><span class="s" id="s-features"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b" id="features-box"></div>
     </div>
@@ -142,7 +144,8 @@
             <label class="field"><span>Emissivity</span><input type="number" id="cm_eps" min="0.02" max="1" step="0.05"></label>
           </div>
         </div>
-        <span class="label">Wall temperature</span>
+        <details class="adv"><summary>More heating settings <span class="muted">wall, boundary layer, nose radius</span></summary>
+        <span class="label" style="margin-top:8px">Wall temperature</span>
         <div class="seg" id="h_wall" style="width:100%;display:flex"><button type="button" data-v="radiative" style="flex:1">Radiative equilibrium</button><button type="button" data-v="fixed" style="flex:1">Fixed</button></div>
         <label class="field hidden" id="twall-row" style="margin-top:10px"><span>Wall held at</span><div class="input-unit"><input type="number" id="h_twall" step="10"><span class="unit">°C</span></div></label>
         <span class="label" style="margin-top:12px">Boundary layer</span>
@@ -151,6 +154,7 @@
           <label class="field" id="retr-row"><span>Transition Re<sub>x</sub></span><input type="number" id="h_retr" min="10000" step="100000"></label>
           <label class="field"><span>Nose radius</span><div class="input-unit"><input type="number" id="h_rn" min="0" step="any" placeholder="From mesh"><span class="unit">mm</span></div></label>
         </div>
+        </details>
       </div>
     </div>
 
@@ -175,16 +179,24 @@
         <p class="lead" id="opt-lead">Let AeroSculpt try changes and keep only those that measurably lower drag. Add <b>Shape features</b> or
           <b>Generate design ideas</b> (step 2) for new geometry; the options below bend the whole body.</p>
         <label class="field"><span>Goal</span><select id="objective"></select></label>
-        <p class="small muted hidden" id="objective-note" style="margin:-4px 0 12px">Lift-based goals (best L/D, keep lift) are off until lift passes the
-          <a href="/validation" target="_blank">solver validation</a>: on thin wings the simulated lift is currently 50–66% low.</p>
+        <p class="small muted hidden" id="objective-note" style="margin:-4px 0 12px"></p>
+        <div class="field"><span class="label">How hard to search</span>
+          <div class="seg" id="effort" style="width:100%;display:flex">
+            <button type="button" data-v="quick" style="flex:1">Quick</button><button type="button" data-v="balanced" style="flex:1">Balanced</button>
+            <button type="button" data-v="thorough" style="flex:1">Thorough</button></div>
+          <div class="est" id="effort-note"></div></div>
+        <div class="adv-only" id="mode-row"><span class="label">What may change</span>
+          <div class="seg" id="opt-mode" style="width:100%;display:flex"><button type="button" data-v="auto" style="flex:1">Everything (recommended)</button>
+            <button type="button" data-v="custom" style="flex:1">Let me choose</button></div>
+          <p class="small muted" id="mode-note" style="margin:6px 0 10px"></p></div>
         <div id="opt-aspects">
-        <span class="label">What may change <span class="muted" id="aspect-limit"></span></span>
+        <span class="label">Whole-body changes <span class="muted" id="aspect-limit"></span></span>
         <div id="aspects"></div>
         </div>
         <div id="opt-params" class="notice info hidden" style="margin:0 0 12px"></div>
-        <label class="field"><span>Design budget (designs to try at most)</span>
+        <details class="adv"><summary>Advanced <span class="muted">exact budget, change size, parameters, volume</span></summary>
+        <label class="field" style="margin-top:10px"><span>Design budget (designs to try at most)</span>
           <div class="slider-row"><input type="range" id="iterations" min="1" step="1"><output id="iterations_o"></output></div></label>
-        <details class="adv"><summary>Advanced <span class="muted">change size, parameters, volume</span></summary>
         <label class="field" style="margin-top:10px" id="max-change-row"><span>Maximum shape change</span>
           <div class="slider-row"><input type="range" id="max_change" min="5" max="50" step="1"><output id="max_change_o"></output></div></label>
         <label class="field"><span>Optimize the most influential <span class="muted" id="topk-limit"></span></span>

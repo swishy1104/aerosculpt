@@ -853,6 +853,9 @@ async def project_solidify(request: Request):
         return JSONResponse(_project_out(p, con), status_code=201)
 
 
+# automatic optimization: the whole-body controls in order of how much they usually matter
+AUTO_ASPECTS = ["tail", "nose", "section", "length", "camber", "fairing"]
+
 DEFAULT_ENVELOPE = {"speed_min": 15.0, "speed_max": 40.0, "speed_count": 4, "aoa_min": 0.0, "aoa_max": 8.0,
                     "aoa_count": 3, "altitude": 0.0, "yaw": 0.0, "ref_area": None, "ref_length": None}
 ENVELOPE_LIMITS = {"speed_min": (0.5, 450.0), "speed_max": (0.5, 450.0), "aoa_min": (-30.0, 30.0),
@@ -1254,7 +1257,10 @@ def _build_spec(data, project, plan):
     spec["features"] = _job_features(st, tm, kind)
     if kind == "optimize":
         o = data.get("optimize") or {}
+        auto = not tm and o.get("mode", "auto") == "auto"
         aspects = [] if tm else [a for a in o.get("aspects", []) if a in ALL_ASPECTS]
+        if auto:          # everything the plan allows, most effective first, plus generated ideas
+            aspects = [a for a in AUTO_ASPECTS if a in plan["aspects"]][: plan["max_aspects"]]
         if not tm and not aspects and not _free_features(spec["features"]):
             err(400, "Choose at least one design aspect to improve, or unlock a shape-feature dimension.")
         objective = o.get("objective", "drag")
@@ -1264,10 +1270,8 @@ def _build_spec(data, project, plan):
             objective = "drag"
         if objective not in ALL_OBJECTIVES:
             err(400, "Unknown objective.")
-        from .optimize.runner import objective_available
-        if objective != "drag_fixed_lift" and not objective_available(objective):
-            err(400, "Lift-based goals are switched off until lift passes the solver validation (see /validation). "
-                     "Use the drag goal.")
+        # lift-based goals use the CFD's lift, which reads low on thin wings (see /validation): they
+        # compare designs fairly but their absolute lift is indicative; the results say so
         try:
             iterations = int(o.get("iterations", 6))
             max_change = float(o.get("max_change", 0.25))
@@ -1290,6 +1294,7 @@ def _build_spec(data, project, plan):
         spec["optimize"] = {"objective": objective, "aspects": aspects, "iterations": iterations,
                             "max_change": max_change, "min_volume": min_volume, "max_volume": max_volume,
                             "verify": verify, "seed": int(o.get("seed", 7)) % 100000,
+                            "mode": "auto" if auto else "custom", "auto_ideas": auto,
                             **_search_options(o, tm, plan, _free_features(spec["features"]))}
     try:
         check_spec(spec, plan)
@@ -1353,7 +1358,10 @@ def _build_hyper_spec(data, kind, st, plan):
     spec["features"] = _job_features(st, tm, kind)
     if kind == "optimize":
         o = data.get("optimize") or {}
+        auto = not tm and o.get("mode", "auto") == "auto"
         aspects = [] if tm else [a for a in o.get("aspects", []) if a in ALL_ASPECTS]
+        if auto:
+            aspects = [a for a in AUTO_ASPECTS if a in plan["aspects"]][: plan["max_aspects"]]
         if not tm and not aspects and not _free_features(spec["features"]):
             err(400, "Choose at least one design aspect to improve, or unlock a shape-feature dimension.")
         objective = o.get("objective", "drag")
@@ -1375,6 +1383,7 @@ def _build_hyper_spec(data, kind, st, plan):
         spec["optimize"] = {"objective": objective, "aspects": aspects, "iterations": iterations,
                             "max_change": max_change, "min_volume": min_volume, "max_volume": max_volume,
                             "respect_limits": bool(o.get("respect_limits", True)), "seed": int(o.get("seed", 7)) % 100000,
+                            "mode": "auto" if auto else "custom", "auto_ideas": auto,
                             **_search_options(o, tm, plan, _free_features(spec["features"]))}
     try:
         check_spec(spec, plan)

@@ -125,6 +125,18 @@ Added parts are extra closed shells: the tunnel fills their union, and faces bur
 shell are marked hidden so they are neither wetted area nor surface pressure. Each dimension has a
 lock and an optimizer range; free ones become search variables (`optimize/spaces.FeatureSpace`).
 
+## Automatic optimization and lift goals
+
+- Press Optimize and the default mode (`optimize.mode: "auto"`) uses every whole-body change the plan
+  allows plus generated ideas (boat-tail, rounded front, rear slant, rear diffuser). Each confirmed gain
+  starts a new round of ideas on the improved shape (up to 4 rounds) until a round finds nothing above
+  the measured error. `"mode": "custom"` keeps the hand-picked aspects.
+- Goals: lowest drag, best L/D, lowest drag keeping the lift (Pro/Team). The lift-based goals are
+  indicative until lift passes validation. Results show the drag polar (lift vs drag, one point per
+  angle, needs 2+ angles) and lift and drag force vs airspeed.
+- The workspace opens in a simple view; "Show advanced options" brings back shape features, the
+  aspect list, the exact budget and the limits.
+
 ## Generative design, solid repair and the AI assistant
 
 - `features.propose` / `features.idea`: boat-tail (body section lofted and tapered), rounded front,

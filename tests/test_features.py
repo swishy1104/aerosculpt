@@ -170,3 +170,44 @@ def test_search_adopts_an_idea_then_tunes_its_dimensions():
     assert [a["key"] for a in s.adopted_all] == [f"F.{bt['id']}._use"]
     assert s.best["cand"].values[f"F.{bt['id']}._use"] == "on" and s.best["J"] < 0.9
     assert s.best["cand"].values[f"F.{slant['id']}._use"] == "off"
+
+
+def test_automatic_optimization_end_to_end(tmp_path, monkeypatch):
+    """The whole driver on a stand-in tunnel (drag from the frontal box): automatic aspects and
+    ideas, rounds, the confirmation one level up and the result assembly, in seconds."""
+    from aerosculpt.cfd import analysis, gpu
+    from aerosculpt.geometry.samples import blunt_pod
+    from aerosculpt.optimize import driver
+    from aerosculpt.optimize.runner import Runner
+
+    def fake_run(self, mesh, re_sim, key=None, want_fields=True, progress=None, forcing=None, groups=None):
+        lo, hi = mesh.bbox()
+        size = hi - lo
+        cd = 0.8 * size[1] * size[2] / self.ref_area + 0.02
+        out = {"re_sim": re_sim, "regime": "hybrid", "converged": True, "steps": 1, "seconds": 0.0, "mlups": 0.0,
+               "warm_start": False, "restored": False, "cd_tunnel": cd, "cd_pressure": cd - 0.01, "cd_std": 0.0,
+               "cl": 0.0, "cl_pressure": 0.0, "cs": 0.0, "cm_roll": 0.0, "cm_pitch": 0.0, "cm_yaw": 0.0,
+               "friction_integral": 1.0, "ref_area": self.ref_area, "ref_length": self.ref_length, "blockage": 0.0,
+               "blockage_factor": 1.0, "geometry": {}, "compress": None, "groups": None, "cached": False}
+        if want_fields:
+            out["fields"] = {}
+        return out
+
+    monkeypatch.setattr(analysis.Evaluator, "run", fake_run)
+    monkeypatch.setattr(driver, "MIN_EXPLORE_CELLS", 1e9)          # force exploring on the chosen grid
+    monkeypatch.setattr(gpu, "available", lambda: True)
+    (tmp_path / "pod.stl").write_bytes(blunt_pod(1.0, 0.3, 0.25).to_stl_bytes())
+    spec = {"kind": "optimize", "tunnel": "general", "fidelity": "draft", "cache": False,
+            "model": {"units": "m", "forward": "-x", "up": "+z"},
+            "envelope": {"speeds": [20.0], "aoas": [0.0, 4.0], "altitude": 0.0, "yaw": 0.0, "ref_area": None, "ref_length": None},
+            "zones": [], "features": [],
+            "optimize": {"objective": "drag", "aspects": ["tail", "nose", "section"], "iterations": 40, "max_change": 0.25,
+                         "min_volume": 0.9, "max_volume": 1.5, "verify": None, "seed": 7, "top_k": 3,
+                         "mode": "auto", "auto_ideas": True}}
+    res = Runner(spec, tmp_path / "pod.stl", "pod.stl", tmp_path / "out").run()
+    st = res["strategy"]
+    assert st["confirm_grid"] == "standard" and st["confirm"] == "draft"
+    assert res["rounds"] and res["rounds"][0]["round"] == 1
+    assert st["reliable"] and res["improvement"] > 0.01                       # a narrower box is less drag here
+    assert all(len(row["comparisons"]) == 3 for row in st["confirmed"]["rows"])   # plain + both probe shifts
+    assert (tmp_path / "out" / "best_body.stl").exists()

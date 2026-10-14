@@ -127,9 +127,10 @@ class RCRunner(Runner):
         aoas = list(self.aoas if aoas is None else aoas)
         v_fields = self.speeds[len(self.speeds) // 2]
         runs, perfs = {}, {}
+        re_by_speed, _ = self.re_for(ev)
         for a in angles:
             wind = body.transformed(R=wind_rotation(a, self.yaw))
-            for v, re in zip(self.speeds, self.re_by_speed):
+            for v, re in zip(self.speeds, re_by_speed):
                 self.check_cancel()
                 frac0 = self.run_index / self.total_runs
                 frac1 = (self.run_index + 1) / self.total_runs

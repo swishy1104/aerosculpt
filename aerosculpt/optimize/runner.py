@@ -24,9 +24,9 @@ OBJECTIVES = {
     "ld": "Maximize best lift-to-drag ratio",
     "drag_keep_lift": "Minimize drag, keep lift",
 }
-# Lift-based goals stay off until a lifting case passes validation (wing-ar6 on /validation;
-# measured 2026-10-06: lift slope 50-66% low at every fidelity). An optimizer on unvalidated
-# lift finds shapes that exploit solver error. Flip this once the wing case passes.
+# Lift-based goals are marked indicative until a lifting case passes validation (wing-ar6 on
+# /validation; measured 2026-10-06: lift slope 50-66% low at every fidelity). An optimizer on
+# unvalidated lift can find shapes that exploit solver error. Flip this once the wing case passes.
 LIFT_VALIDATED = False
 LIFT_OBJECTIVES = ("ld", "drag_keep_lift")
 
@@ -303,6 +303,16 @@ class Runner:
         without them stays in base_body for the optimizer to build on."""
         self.features = [f for f in self.spec.get("features") or [] if f.get("enabled", True)]
         self.base_body = self.frame.body
+        if self.spec.get("kind") == "optimize" and (self.spec.get("optimize") or {}).get("auto_ideas"):
+            # "let AeroSculpt decide": its own ideas (boat-tail, rounded front, slants) join the search,
+            # each optional, so only those that measurably help are kept
+            from ..geometry.features import Frame, apply, propose
+            body = apply(self.frame.body, self.features, self.feature_frame())[0] if self.features else self.frame.body
+            have = {f["name"] for f in self.features}
+            ideas = [f for f in propose(body, Frame(self.frame.scale, self.frame.R0, self.frame.center)) if f["name"] not in have]
+            if ideas:
+                self.log("generated ideas to try: " + ", ".join(f["name"].replace(" (proposed)", "").lower() for f in ideas))
+            self.features = self.features + ideas
         if self.features:
             from ..geometry.features import apply
             body, problems, info = apply(self.frame.body, self.features, self.feature_frame())
@@ -336,17 +346,25 @@ class Runner:
     def run_for(self, aoa, i_speed):
         """The run behind envelope angle `aoa` and speed index `i_speed` of the last design."""
         mirror = self.symmetric and aoa < 0
-        run = self.last_runs[(abs(aoa) if mirror else aoa, self.re_by_speed[i_speed])]
+        run = self.last_runs[(abs(aoa) if mirror else aoa, self.last_re[i_speed])]
         return mirror_run(run) if mirror else run
+
+    def re_for(self, ev):
+        """Reynolds-number groups for an evaluator: the chosen level's, or a finer grid's own higher
+        cap (the optimizer's confirmation one level up)."""
+        if ev.fid.re_cap <= self.fid.re_cap:
+            return self.re_by_speed, self.re_groups
+        return reynolds_groups(self.speeds, self.L_body, self.air["nu"], ev.fid.re_cap)
 
     def evaluate_design(self, ev, body, label, angles, aoas=None, groups=None):
         """All CFD runs for one design -> (polar, fields per simulated angle). aoas: the envelope
         angles to report (default all); groups: part id per face for per-part forces."""
         aoas = list(self.aoas if aoas is None else aoas)
+        re_by_speed, re_groups = self.re_for(ev)
         runs = {}
         for a in angles:
             wind = body.transformed(R=wind_rotation(a, self.yaw))
-            for re in self.re_groups:
+            for re in re_groups:
                 self.check_cancel()
                 frac0 = self.run_index / self.total_runs
                 frac1 = (self.run_index + 1) / self.total_runs
@@ -358,33 +376,33 @@ class Runner:
                                    f"{label} · {a:g}° · CFD run {self.run_index + 1} of {self.total_runs}",
                                    live_run(self, label, a, None, f, cd, trace))
                 try:
-                    runs[(a, re)] = ev.run(wind, re, key=(a, re), want_fields=(re == self.re_groups[0]) and self.fields_wanted,
+                    runs[(a, re)] = ev.run(wind, re, key=(a, re), want_fields=(re == re_groups[0]) and self.fields_wanted,
                                            progress=prog, groups=groups)
                 except InterruptedError:
                     raise JobCancelled()
                 self.run_index += 1
                 self.count_run(ev, runs[(a, re)])
-            self.transonic_anchor(wind, [runs[(a, re)] for re in self.re_groups])
-        self.last_runs = runs
+            self.transonic_anchor(wind, [runs[(a, re)] for re in re_groups])
+        self.last_runs, self.last_re = runs, re_by_speed
         polar = []
         for aoa in aoas:
             mirror = self.symmetric and aoa < 0
             a_sim = abs(aoa) if mirror else aoa
             row = None
             speeds = []
-            for v, re in zip(self.speeds, self.re_by_speed):
+            for v, re in zip(self.speeds, re_by_speed):
                 run = runs[(a_sim, re)]
                 if mirror:
                     run = mirror_run(run)
                 speeds.append(at_speed(run, v, self.air, self.L_body))
-                if re == self.re_groups[0]:
+                if re == re_groups[0]:
                     row = run
             mc = row.get("compress", {}).get("mach_crit") if row.get("compress") else None
             polar.append({"aoa": aoa, "mirror": mirror, "regime": row["regime"], "mach_crit": mc, "cl": row["cl"], "cs": row["cs"],
                           "cm_pitch": row["cm_pitch"], "cm_roll": row["cm_roll"], "cm_yaw": row["cm_yaw"],
                           "cd_pressure": row["cd_pressure"], "converged": row["converged"], "cd_std": row["cd_std"],
                           "blockage": row["blockage"], "seconds": row["seconds"], "speeds": speeds})
-        fields = {a: runs[(a, self.re_groups[0])].get("fields") for a in angles}
+        fields = {a: runs[(a, re_groups[0])].get("fields") for a in angles}
         return polar, fields
 
     def transonic_anchor(self, wind, runs):

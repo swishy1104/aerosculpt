@@ -242,7 +242,8 @@ export function strategyHTML(res) {
       or — for nose shapes — use the Supersonic tunnel, whose methods are deterministic and validated for noses. The ranking above still shows which way each parameter pushes.</div></div>` : "";
   return `<div class="section-title">How the runs were spent</div>
     <div class="kv">
-      <span class="k">Explored with</span><span class="v">${esc(s.explore)}${s.confirm ? (s.confirm.includes("model") ? ` · confirmed with the ${esc(s.confirm)}` : ` · confirmed at ${esc(s.confirm)} fidelity`) : ""}</span>
+      <span class="k">Explored with</span><span class="v">${esc(s.explore)}${s.confirm ? (s.confirm.includes("model") ? ` · confirmed with the ${esc(s.confirm)}`
+        : s.confirm_grid ? ` · confirmed on the ${esc(s.confirm_grid)} grid (one level up, charged as ${esc(s.confirm)})` : ` · confirmed at ${esc(s.confirm)} fidelity`) : ""}</span>
       <span class="k">Designs explored</span><span class="v">${s.designs_explored} of a ${s.budget}-design budget${s.rejected ? ` · ${s.rejected} rejected before simulating` : ""}</span>
       <span class="k">Solver error</span><span class="v">${n.samples > 1 ? `±${fmtPct(n.sigma, 2)} (measured)` : "deterministic model"} → changes must beat ${fmtPct(eps, 2)}</span>
       <span class="k">Stopped because</span><span class="v" style="text-align:right">${esc(s.stop_reason || "—")}</span>

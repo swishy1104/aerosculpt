@@ -325,6 +325,9 @@ class FeatureSpace:
     def fast_check(self, cand: Candidate):
         if cand.reason:
             return cand.reason
+        r = self.inner.fast_check(cand.inner)    # the reshaped body's own size and volume, checked cheaply
+        if r:
+            return r
         c, info = self.c, cand.info
         for k, lim in (("overall_length", "max_length"), ("overall_width", "max_width"), ("overall_height", "max_height")):
             if c.get(lim) and info.get(k, 0) > c[lim] * (1 + 1e-9):

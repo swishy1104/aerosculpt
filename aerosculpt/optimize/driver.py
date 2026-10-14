@@ -34,6 +34,13 @@ from ..plans import EXPLORE_FID
 
 SHIFTS = [(0.37, 0.23, 0.29), (-0.31, 0.41, -0.17)]
 MIN_EXPLORE_CELLS = 12      # smallest body size across, in cells, that exploration can resolve
+# when exploration had to run on the chosen grid, confirmation goes one level up (finer grid, higher
+# Reynolds cap), charged as the chosen level; from the top level, the same level with more cells.
+# Measured on the Mazda (2026-10-13): a draft-explored design read 0.39 on draft, 0.64 on standard, 0.67 on high
+CONFIRM_UP = {"draft": "standard", "standard": "high"}
+CONFIRM_REFINE = 2.0
+MAX_ROUNDS = 4              # automatic mode: rounds of new ideas on the improved design
+MIN_ROUND_BUDGET = 8        # designs a further round needs (probe, screening, a little search)
 G0 = 9.80665
 OBJ_LABELS = {**OBJECTIVES, "drag_fixed_lift": "Minimize drag at fixed lift"}
 
@@ -201,13 +208,21 @@ def optimize(r):
         if not space.vars:
             raise ValueError("nothing to optimize: unlock a shape-feature dimension or choose a design aspect")
     obj_kind = "drag_fixed_lift" if winged else o.get("objective", "drag")
-    if obj_kind != "drag" and not winged:
+    if obj_kind not in ("drag", "ld", "drag_keep_lift") and not winged:
         raise ValueError("this goal is not available for this design")
+
+    def score(polar, base):
+        """The objective against the baseline, lower is better, the baseline scoring 1."""
+        if obj_kind == "ld":
+            ld, ld0 = -objective("ld", polar, base), -objective("ld", base, base)
+            return ld0 / ld if ld > 1e-9 and ld0 > 1e-9 else 2.0
+        if obj_kind == "drag_keep_lift":
+            return objective("drag_keep_lift", polar, base)
+        return objective("drag", polar, base)
     r.sim_angles = r.simulated_angles(space.base.mesh, can_mirror=can_mirror)
     fid_full = r.fid
     fid_x = FIDELITY[EXPLORE_FID.get(fid_full.name, "coarse")]
     if r.__class__.__name__ == "RCRunner" and getattr(r, "u_cap", None) and fid_x.u_lat > r.u_cap:
-        import dataclasses
         fid_x = dataclasses.replace(fid_x, u_lat=r.u_cap)
     lift = FixedLift(r, space, o.get("mass_kg"), bool(o.get("keep_stability", True))) if winged else None
     wing_only = winged          # winged designs never need the CFD in the loop (see the module notes)
@@ -237,30 +252,31 @@ def optimize(r):
                 return "outside the tunnel grid sized for these bounds (widen the bounds before starting)"
         return None
 
-    base_full_check = space.full_check
-    base_fast_check = space.fast_check
+    def guard(sp):
+        """The tunnel grid, stall and stability on top of a space's own constraints."""
+        own_full, own_fast = sp.full_check, sp.fast_check
 
-    def fast_check(cand):
-        why = base_fast_check(cand)
-        if why or lift is None:
-            return why
-        return lift.check(cand)      # stall and stability: a vortex lattice, ~0.1 s
+        def fast_check(cand):
+            why = own_fast(cand)
+            if why or lift is None:
+                return why
+            return lift.check(cand)      # stall and stability: a vortex lattice, ~0.1 s
 
-    space.fast_check = fast_check
-
-    def full_check(cand):
-        why = base_full_check(cand)
-        if why:
-            return why
-        if lift is not None:
-            why = lift.check(cand)
+        def full_check(cand):
+            why = own_full(cand)
             if why:
                 return why
-        if not wing_only:
-            return inside_grid(cand)
-        return None
+            if lift is not None:
+                why = lift.check(cand)
+                if why:
+                    return why
+            if not wing_only:
+                return inside_grid(cand)
+            return None
 
-    space.full_check = full_check
+        sp.fast_check, sp.full_check = fast_check, full_check
+
+    guard(space)
 
     angles_x = subset(r.aoas)
     sim_x = sorted({abs(a) for a in angles_x}) if r.symmetric else list(angles_x)
@@ -269,7 +285,8 @@ def optimize(r):
     explore_cfd = not winged
     n_confirm = int(o.get("confirm", 2))
     # screening runs count against the budget (paired ones included); confirmation is paired too
-    r.total_runs = max(1, (budget + 3) * per_x * explore_cfd + (2 * n_confirm + 2) * per_full * (not wing_only))
+    per_one = per_full // max(1, len(r.sim_angles))      # one angle: the confirmation's shifted runs
+    r.total_runs = max(1, (budget + 3) * per_x * explore_cfd + (n_confirm + 1) * (per_full + len(SHIFTS) * per_one) * (not wing_only))
     r.run_index = 0
     ev_x = r.make_evaluator(lo, hi, fid_x) if explore_cfd else None
     # a body only a few cells across on the exploration grid changes drag by several percent with
@@ -281,6 +298,16 @@ def optimize(r):
         fid_x = dataclasses.replace(fid_full, u_lat=fid_x.u_lat) if fid_x.u_lat < fid_full.u_lat else fid_full
         r.log(f"the body is only {thin:.1f} cells across on the {EXPLORE_FID.get(fid_full.name)} grid: exploring on {fid_full.name}")
         ev_x = r.make_evaluator(lo, hi, fid_x)
+    # confirmation runs on a different grid from exploration, so a shape that only wins through the
+    # exploration grid's error is caught. When exploration had to move onto the chosen grid, confirm
+    # on a finer version of it (charged as the chosen level).
+    fid_c = fid_full
+    if explore_cfd and fid_x.name == fid_full.name:
+        up = CONFIRM_UP.get(fid_full.name)
+        fid_c = (dataclasses.replace(FIDELITY[up], name=fid_full.name) if up
+                 else dataclasses.replace(fid_full, cells=int(fid_full.cells * CONFIRM_REFINE)))
+        r.log(f"exploration used the {fid_full.name} grid itself: confirming on the "
+              + (f"{up} grid" if up else f"{fid_full.name} grid with {CONFIRM_REFINE:g}x the cells"))
     ev_full = None
     r.log(f"optimizing {len(space.vars)} parameter(s): explore with "
           f"{'the wing model' if winged else f'{fid_x.name} CFD on {len(sim_x)} angle(s)'}, budget {budget} designs")
@@ -296,7 +323,7 @@ def optimize(r):
         r.fields_wanted = False
         polar, _ = r.evaluate_design(ev_x, cand.mesh, label, sim_x, aoas=angles_x, groups=None)
         base = base_x.setdefault("polar", polar)
-        J = objective("drag", polar, base)
+        J = score(polar, base)
         s = polar_summary(polar)
         return {"J": J, "drag_ratio": J, "cd_ref": s["cd_at_min_aoa"], "converged": all(p["converged"] for p in polar)}
 
@@ -311,7 +338,7 @@ def optimize(r):
             r.fields_wanted = False
             polar, _ = r.evaluate_design(ev_x, m, f"Measuring solver error ({k + 1}/2)", sim_x, aoas=angles_x)
             base_shift.setdefault(k, polar)
-            out.append(objective("drag", polar, base_x["polar"]))
+            out.append(score(polar, base_x["polar"]))
         return out
 
     def paired(cand, label):
@@ -319,7 +346,7 @@ def optimize(r):
         m = cand.mesh.transformed(t=np.array(SHIFTS[0]) * ev_x.domain.dx)
         r.fields_wanted = False
         polar, _ = r.evaluate_design(ev_x, m, label, sim_x, aoas=angles_x)
-        return objective("drag", polar, base_shift[0])
+        return score(polar, base_shift[0])
 
     kept = {}
 
@@ -330,44 +357,39 @@ def optimize(r):
             return [{"J": _ratio(lift.component(c, fine=True), base_rows), "fixed_lift": _short(lift.component(c, fine=True))}
                     for c in cands]
         if ev_full is None:
-            ev_full = r.make_evaluator(lo, hi, fid_full)
-        rows_out = []
-        base_ref = {}
-        seq = [("Confirming · baseline", cands[0], cands[0].mesh)]
-        seq.append(("Confirming · solver error", cands[0], cands[0].mesh.transformed(t=np.array(SHIFTS[0]) * ev_full.domain.dx)))
-        seq += [(f"Confirming · candidate {k}", c, c.mesh) for k, c in enumerate(cands[1:], 1)]
-        if not winged:          # each candidate also at the error probe's shift: a paired comparison
-            seq += [(f"Confirming · candidate {k} (shifted)", c, c.mesh.transformed(t=np.array(SHIFTS[0]) * ev_full.domain.dx))
-                    for k, c in enumerate(cands[1:], 1)]
-        js = []
-        shifted = {}
-        for label, cand, mesh in seq:
-            is_shift = label.endswith("(shifted)")
-            r.fields_wanted = not is_shift and label != "Confirming · solver error"
-            polar, fields = r.evaluate_design(ev_full, mesh, label, r.sim_angles, groups=cand.groups if winged else None)
-            if winged:
-                rows = lift.with_cfd(cand)
-                base = base_ref.setdefault("rows", rows)
-                J = _ratio(rows, base)
-                extra = {"fixed_lift": _short(rows)}
-            else:
-                if is_shift:
-                    shifted[id(cand)] = objective("drag", polar, base_ref["shift_polar"])
-                    continue
-                base = base_ref.setdefault("polar", polar)
-                J = objective("drag", polar, base)
-                if label == "Confirming · solver error":
-                    base_ref["shift_polar"] = polar
-                rows = None
-                extra = {}
-            js.append(J)
-            if label != "Confirming · solver error":
-                kept[id(cand)] = (polar, fields, rows)
-                rows_out.append({"J": J, "drag_ratio": objective("drag", polar, base_ref.get("polar", polar)) if not winged else J,
-                                 **extra})
+            ev_full = r.make_evaluator(lo, hi, fid_c)
+        dx = ev_full.domain.dx
+        # the baseline, then the baseline at each error-probe shift; the candidates, then each at every
+        # shift against the baseline at that shift: a gain must hold however the grid lines up. The
+        # shifted runs use one angle (the one nearest zero): grid alignment is not a matter of angle.
+        a0 = min(r.aoas, key=abs)
+        one = [abs(a0) if r.symmetric else a0]
+        seq = [("Confirming · baseline", cands[0], cands[0].mesh, "base", None)]
+        seq += [(f"Confirming · solver error ({k + 1}/{len(SHIFTS)})", cands[0], cands[0].mesh.transformed(t=np.array(sh) * dx), "probe", k)
+                for k, sh in enumerate(SHIFTS)]
+        seq += [(f"Confirming · candidate {i}", c, c.mesh, "cand", None) for i, c in enumerate(cands[1:], 1)]
+        seq += [(f"Confirming · candidate {i} (shifted {k + 1})", c, c.mesh.transformed(t=np.array(sh) * dx), "shift", k)
+                for k, sh in enumerate(SHIFTS) for i, c in enumerate(cands[1:], 1)]
+        rows_out, probes, shifted, js = [], {}, {}, [1.0]
+        base_polar = None
+        for label, cand, mesh, kind, k in seq:
+            r.fields_wanted = kind in ("base", "cand")
+            shifted_run = kind in ("probe", "shift")
+            polar, fields = r.evaluate_design(ev_full, mesh, label, one if shifted_run else r.sim_angles, aoas=[a0] if shifted_run else None)
+            if kind == "probe":
+                probes[k] = polar
+                js.append(score(polar, [q for q in base_polar if q["aoa"] == a0]))
+                continue
+            if kind == "shift":
+                shifted.setdefault(id(cand), {})[k] = score(polar, probes[k])
+                continue
+            base_polar = base_polar or polar
+            kept[id(cand)] = (polar, fields, None)
+            rows_out.append({"J": score(polar, base_polar), "drag_ratio": objective("drag", polar, base_polar)})
         for row, c in zip(rows_out[1:], cands[1:]):
-            row["J_shift"] = shifted.get(id(c))
-        sigma = abs(js[1] - js[0]) / math.sqrt(2.0)
+            got = shifted.get(id(c), {})
+            row["J_shift"] = [got[k] for k in sorted(got)] or None
+        sigma = float(np.std(js, ddof=1))
         rows_out[0]["eps"] = 2.0 * sigma
         r.log(f"confirmation error estimate: {sigma:.4f}")
         return rows_out
@@ -383,20 +405,69 @@ def optimize(r):
     search.relevance = None
     search.run()
 
+    # ---- further rounds: new ideas on the improved design, until a round brings no confirmed gain --
+    first_space, base_c = space, space.base
+    all_history = list(search.history)
+    rounds = [{"round": 1, "change": search.best["J"] - 1.0 if search.reliable else 0.0, "reliable": search.reliable,
+               "adopted": [a["label"] for a in getattr(search, "adopted_all", [])], "stop": search.stop_reason}]
+    kept_rounds = [(space, search.best["cand"])] if search.reliable else []
+    total_J = search.best["J"] if search.reliable else 1.0
+    used = search.evals
+    if o.get("auto_ideas") and not winged:
+        from ..geometry.features import propose as generate_ideas
+        rnd = 1
+        while search.reliable and rnd < MAX_ROUNDS and budget - used >= MIN_ROUND_BUDGET:
+            rnd += 1
+            start = search.best["cand"]
+            ideas = generate_ideas(start.mesh, r.feature_frame())
+            for f in ideas:
+                f["name"] = f["name"].replace("(proposed)", f"(round {rnd})")
+            if not ideas:
+                break
+            sp2 = FeatureSpace(FixedSpace(start.mesh), ideas, r.feature_frame(), constraints)
+            guard(sp2)
+            space = sp2                      # the error probes run on this round's starting design
+            base_x.clear()
+            base_shift.clear()
+            r.log(f"round {rnd}: the design improved by {1 - total_J:.1%} so far; trying new ideas on it: "
+                  + ", ".join(f["name"].split(" (")[0].lower() for f in ideas))
+            s2 = Search(sp2, explore, budget=budget - used, top_k=top_k, n_confirm=n_confirm,
+                        eps_floor=0.003, noise=noise, confirm=confirm, log=r.log, progress=progress,
+                        cancel=r.check_cancel, seed=int(o.get("seed", 7)) + rnd, paired=paired)
+            s2.relevance = None
+            s2.run()
+            used += s2.evals
+            for h in s2.history:
+                all_history.append({**h, "i": len(all_history), "round": rnd})
+            rounds.append({"round": rnd, "change": s2.best["J"] - 1.0 if s2.reliable else 0.0, "reliable": s2.reliable,
+                           "adopted": [a["label"] for a in getattr(s2, "adopted_all", [])], "stop": s2.stop_reason})
+            if not s2.reliable:
+                r.log(f"round {rnd}: nothing more beat the measured error; the design is as good as this search can make it")
+                break
+            for h in all_history:
+                if h.get("round", 1) != rnd:
+                    h["best"] = False
+            total_J *= s2.best["J"]
+            kept_rounds.append((sp2, s2.best["cand"]))
+            search = s2
+        space = first_space
+    search.history = all_history
+
     # ---- results -------------------------------------------------------------------------------
     best_c = search.best["cand"]
-    base_c = space.base
     result = {"kind": "optimize", "mode": mode, "objective": obj_kind, "objective_label": OBJ_LABELS[obj_kind],
+              "objective_indicative": obj_kind in ("ld", "drag_keep_lift"), "auto": bool(o.get("auto_ideas")),
               "variables": [v.public() for v in space.vars], "aspects": aspects,
               "best_values": {k: _jsonable(v) for k, v in best_c.values.items()},
-              "improvement": 1.0 - search.best["J"], "zones": [{"name": z.name, "type": z.type} for z in r.zones],
+              "improvement": 1.0 - total_J, "rounds": rounds, "zones": [{"name": z.name, "type": z.type} for z in r.zones],
               "keep_zones": [], "history": search.history, "relevance": search.relevance,
               "strategy": {"noise": search.noise_info, "ranking": search.ranking, "selected": search.selected,
                            "adopted": search.adopted, "adopted_all": getattr(search, "adopted_all", []), "stop_reason": search.stop_reason, "confirmed": search.confirmed,
                            "reliable": search.reliable, "epsilon": search.final_eps, "budget": budget, "top_k": top_k,
-                           "designs_explored": search.evals, "rejected": search.rejected,
+                           "designs_explored": used, "rejected": search.rejected,
                            "explore": "wing model (coarse)" if winged else fid_x.name,
                            "confirm": "wing model (full resolution)" if winged else fid_full.name,
+                           "confirm_grid": None if winged or fid_c is fid_full else (CONFIRM_UP.get(fid_full.name) or f"{fid_full.name}, finer"),
                            "cache_hits": (ev_x.cache_hits if ev_x else 0) + (ev_full.cache_hits if ev_full else 0),
                            "explore_cells": ev_x.info()["body_cells"] if ev_x else None,
                            "confirm_cells": ev_full.info()["body_cells"] if ev_full else None},
@@ -404,10 +475,12 @@ def optimize(r):
     if tmpl:
         result["template"] = {"id": tmpl["id"], "base_values": {k: _jsonable(v) for k, v in base_c.values.items()},
                               "best_values": result["best_values"], "info_base": base_c.info, "info_best": best_c.info}
-    if features:
-        result["features"] = {"changes": [{**c, "base": _jsonable(c["base"]), "best": _jsonable(c["best"])} for c in space.changes(best_c)],
-                              "list": [{"id": f["id"], "name": f["name"], "type": f["type"]} for f in space.features]}
-    if features and mode != "aspects":
+    feat_rounds = [(sp_r, b) for sp_r, b in (kept_rounds or [(space, best_c)]) if isinstance(sp_r, FeatureSpace)]
+    if feat_rounds:
+        changes = [c for sp_r, best_r in feat_rounds for c in sp_r.changes(best_r)]
+        result["features"] = {"changes": [{**c, "base": _jsonable(c["base"]), "best": _jsonable(c["best"])} for c in changes],
+                              "list": [{"id": f["id"], "name": f["name"], "type": f["type"]} for sp_r, _ in feat_rounds for f in sp_r.features]}
+    if isinstance(space, FeatureSpace) and mode != "aspects":
         result["volume_ratio"] = space.FT.union_volume(best_c.mesh) / space.base_union if space.base_union else 1.0
     elif mode == "aspects":
         result["volume_ratio"] = space.dfm.volume_ratio(best_c.mesh)

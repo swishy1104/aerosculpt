@@ -366,20 +366,30 @@ class Search:
             jb = rows[0]["J"]
             conf = []
             for p, r in zip(picks, rows[1:]):
-                j = r["J"] / jb
-                if r.get("J_shift") is not None:          # paired: the mean of the plain and shifted comparisons
-                    j = 0.5 * (j + r["J_shift"])
-                conf.append({"explore_J": p["J"], "J": j, "res": r, "cand": p["cand"], "pair": (r["J"] / jb, r.get("J_shift"))})
-            pairs = [c["pair"] for c in conf if c["pair"][1] is not None]
-            if pairs:
-                sd = float(np.sqrt(np.mean([(a - b) ** 2 for a, b in pairs]) / 2.0))
+                # paired: the plain comparison and one per error-probe shift (each against the baseline
+                # at that shift); the confirmed value is their mean
+                sh = r.get("J_shift")
+                sh = [] if sh is None else [float(v) for v in (sh if isinstance(sh, (list, tuple)) else [sh]) if v is not None]
+                comps = [r["J"] / jb] + sh
+                conf.append({"explore_J": p["J"], "J": float(np.mean(comps)), "res": r, "cand": p["cand"], "comps": comps})
+            spreads = [np.var(c["comps"], ddof=1) for c in conf if len(c["comps"]) > 1]
+            if spreads:
+                sd = float(np.sqrt(np.mean(spreads)))
                 eps_c = max(2.0 * sd, self.eps_floor, min(eps_c, max(eps, 0.3 * eps_c)))
+
+            def holds(c):
+                # better on average by more than the error, and better at every grid alignment: a shape
+                # that only wins where the grid happens to fall is exploiting the grid, not the flow
+                return c["J"] < 1.0 - eps_c and max(c["comps"]) < 1.0
+
             for c in conf:
-                self._entry("confirm", "confirmed" if c["J"] < 1.0 - eps_c else "not confirmed", c["cand"], {**c["res"], "J": c["J"]},
+                self._entry("confirm", "confirmed" if holds(c) else "not confirmed", c["cand"], {**c["res"], "J": c["J"]},
                             explore_objective=c["explore_J"])
-            top = min(conf, key=lambda c: c["J"])
-            self.confirmed = {"eps": eps_c, "baseline": rows[0], "rows": [{"explore": c["explore_J"], "confirmed": c["J"]} for c in conf]}
-            if top["J"] < 1.0 - eps_c:
+            good = [c for c in conf if holds(c)]
+            top = min(good or conf, key=lambda c: c["J"])
+            self.confirmed = {"eps": eps_c, "baseline": rows[0], "rows": [{"explore": c["explore_J"], "confirmed": c["J"],
+                                                                           "comparisons": c["comps"]} for c in conf]}
+            if good:
                 best = {"J": top["J"], "cand": top["cand"], "res": top["res"], "baseline_res": rows[0]}
                 reliable = True
             else:

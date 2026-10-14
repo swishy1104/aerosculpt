@@ -14,7 +14,8 @@ TUNNELS = ["general", "rc", "supersonic"]
 CREDITS_PER_RUN = {"coarse": 0.4, "draft": 1, "standard": 3, "high": 8}
 # the optimizer explores on the next coarser grid and confirms at the fidelity the user chose
 EXPLORE_FID = {"draft": "coarse", "standard": "draft", "high": "draft"}
-CONFIRM_DESIGNS = 6          # baseline, its error probe, two candidates and each again at the probe's shift
+CONFIRM_DESIGNS = 3          # the baseline and two candidates over the whole envelope
+CONFIRM_SHIFTED = 6          # each again at both error-probe shifts, at one angle
 
 PLANS = {
     "lite": {
@@ -90,7 +91,8 @@ def estimate_runs(spec: dict, re_groups: int = 1) -> dict:
     tid = (spec.get("template") or {}).get("id")
     if tid in ("wing", "uav") and spec.get("tunnel") != "supersonic":
         return {}                                   # winged designs: the wing model, no CFD
-    runs = {fid: per_design * CONFIRM_DESIGNS}
+    per_angle = per_design // max(1, len(env.get("aoas", [0])))
+    runs = {fid: per_design * CONFIRM_DESIGNS + per_angle * CONFIRM_SHIFTED}
     if True:
         n_ang = min(3, len(env.get("aoas", [0])))
         with_props = spec.get("tunnel") == "rc" and spec.get("propellers")

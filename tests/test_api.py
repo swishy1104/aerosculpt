@@ -108,22 +108,22 @@ def test_full_flow(client):
                     "optimize": {"aspects": ["nose"], "iterations": 50}}, headers=H)
     assert r.status_code == 403
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft",
-                    "optimize": {"aspects": ["nose", "tail", "length"], "iterations": 3}}, headers=H)
+                    "optimize": {"mode": "custom", "aspects": ["nose", "tail", "length"], "iterations": 3}}, headers=H)
     assert r.status_code == 403
-    # lift-based goals are refused until lift passes validation
+    # lift-based goals are offered as indicative (lift is not yet validated) on Pro and Team
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft",
-                    "optimize": {"objective": "ld", "aspects": ["nose"], "iterations": 3}}, headers=H)
-    assert r.status_code == 400 and "validation" in r.json()["error"]
+                    "optimize": {"objective": "ld", "iterations": 3, "top_k": 2}}, headers=H)
+    assert r.status_code == 403 and "Pro and Team" in r.json()["error"]
     assert "ld" in client.get("/api/plans").json()["objectives_unvalidated"]
     # a valid job is queued and holds its estimated credits
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft", "zones": [zone],
-                    "optimize": {"aspects": ["nose", "tail"], "iterations": 4, "top_k": 3}}, headers=H)
+                    "optimize": {"mode": "custom", "aspects": ["nose", "tail"], "iterations": 4, "top_k": 3}}, headers=H)
     assert r.status_code == 403 and "parameters at once" in r.json()["error"]     # Lite optimizes the top 2
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft", "zones": [zone],
-                    "optimize": {"aspects": ["nose", "tail"], "iterations": 4, "top_k": 2}}, headers=H)
+                    "optimize": {"mode": "custom", "aspects": ["nose", "tail"], "iterations": 4, "top_k": 2}}, headers=H)
     assert r.status_code == 201, r.text
     job = r.json()
-    # explore on the coarse grid: 2 angles x (4 designs + 3) x 0.4 credits; confirm: 6 runs x 2 angles at draft
+    # explore on the coarse grid: 2 angles x (4 designs + 3) x 0.4 credits; confirm: 3 runs x 2 angles + 6 shifted at one angle, at draft
     assert job["status"] == "queued" and job["estimated_credits"] == 18
     assert job["spec"]["envelope"]["speeds"] == [10.0, 20.0, 30.0] and job["spec"]["envelope"]["aoas"] == [0.0, 4.0]
     assert job["spec"]["zones"][0]["name"] == "mount"
@@ -402,7 +402,7 @@ def test_shape_features_api(client):
     # a job carries the features; with a free feature dimension no design aspect is needed
     base = {"units": "m", "forward": "-x", "up": "+z"}
     r = client.post(f"/api/projects/{pid}/jobs", json={**base, "kind": "optimize", "fidelity": "draft",
-                    "optimize": {"aspects": [], "iterations": 4, "top_k": 2}}, headers=H)
+                    "optimize": {"mode": "custom", "aspects": [], "iterations": 4, "top_k": 2}}, headers=H)
     assert r.status_code == 201, r.text
     assert r.json()["spec"]["features"][0]["type"] == "tailcone"
 
@@ -423,3 +423,25 @@ def test_solid_copy_and_real_length(client):
     r = client.post(f"/api/projects/{q['id']}/features/propose", json={}, headers=H)
     assert r.status_code == 200 and all(f["optional"] for f in r.json())
     assert client.post(f"/api/projects/{q['id']}/features/ai", json={}, headers=H).status_code == 404   # assistant off
+
+
+def test_automatic_mode_is_the_default(client):
+    from aerosculpt.security import auth_limiter
+    auth_limiter.hits.clear()                 # the module's earlier sign-ups count against the per-IP limit
+    client.post("/api/auth/logout", headers=H)
+    signup(client, "auto@example.com")
+    p = client.post("/api/projects", json={"sample": "rocket"}, headers=H).json()
+    base = {"units": "m", "forward": "-x", "up": "+z"}
+    # no mode and no aspects: AeroSculpt picks every change the plan allows and designs its own ideas
+    r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft",
+                    "optimize": {"iterations": 12, "top_k": 2}}, headers=H)
+    assert r.status_code == 201, r.text
+    o = r.json()["spec"]["optimize"]
+    assert o["mode"] == "auto" and o["auto_ideas"] and o["aspects"] == ["tail", "nose"]    # Lite: 2 aspects
+    client.post(f"/api/jobs/{r.json()['id']}/cancel", headers=H)
+    # hand-picked aspects need custom mode and generate no ideas
+    r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft",
+                    "optimize": {"mode": "custom", "aspects": ["length"], "iterations": 4, "top_k": 2}}, headers=H)
+    assert r.status_code == 201, r.text
+    o = r.json()["spec"]["optimize"]
+    assert o["mode"] == "custom" and not o["auto_ideas"] and o["aspects"] == ["length"]

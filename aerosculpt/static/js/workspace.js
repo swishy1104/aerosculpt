@@ -38,10 +38,11 @@ const top = appTop(me, [{ label: "Projects", href: "/app" }, titleInput]);
 const S = project.settings;
 S.envelope = Object.assign({ speed_min: 15, speed_max: 40, speed_count: 4, aoa_min: 0, aoa_max: 8, aoa_count: 3, altitude: 0, yaw: 0, ref_area: null }, S.envelope || {});
 S.zones = S.zones || [];
-const opt = Object.assign({ objective: "drag", aspects: ["nose", "tail"], max_change: 0.25, iterations: Math.min(12, me.limits.max_iterations),
+const opt = Object.assign({ objective: "drag", mode: "auto", aspects: ["nose", "tail"], max_change: 0.25, iterations: Math.min(24, me.limits.max_iterations),
   min_volume: 0.95, max_volume: 1.5, verify: null, top_k: Math.min(4, me.limits.max_top_k || 4), keep_stability: true, mass_kg: null,
   max_length: null, max_width: null, max_height: null, min_thickness: null, hold_wing_area: false }, S.optimize || {});
 opt.top_k = Math.min(opt.top_k, me.limits.max_top_k || 8);
+let advOn = false;                         // "Show advanced options" (setAdvanced)
 opt.verify = null;              // the optimizer now confirms its best candidates itself
 const winged = () => !!S.template && (S.template.id === "uav" || S.template.id === "wing");
 const unvalidated = catalog.objectives_unvalidated || [];
@@ -710,17 +711,22 @@ function renderObjective() {
     sel.onchange = null;
     return;
   }
+  const GOALS = { drag: "Lowest drag", ld: "Best lift-to-drag ratio (L/D)", drag_keep_lift: "Lowest drag, keeping the lift" };
   sel.innerHTML = Object.entries(catalog.objectives).filter(([k]) => k !== "drag_fixed_lift").map(([k, label]) => {
-    const ok = me.limits.objectives.includes(k) && !unvalidated.includes(k);
-    const why = unvalidated.includes(k) ? " — lift not yet validated" : " (Pro)";
-    return `<option value="${k}" ${ok ? "" : "disabled"}>${esc(label)}${ok ? "" : why}</option>`;
+    const ok = me.limits.objectives.includes(k);
+    return `<option value="${k}" ${ok ? "" : "disabled"}>${esc(GOALS[k] || label)}${ok ? "" : " (Pro)"}</option>`;
   }).join("");
-  if (!me.limits.objectives.includes(opt.objective) || unvalidated.includes(opt.objective) || opt.objective === "drag_fixed_lift") opt.objective = "drag";
-  $("#objective-note").classList.toggle("hidden", !unvalidated.length);
-  $("#objective-note").innerHTML = `Lift-based goals (best L/D, keep lift) are off until lift passes the
-    <a href="/validation" target="_blank">solver validation</a>: on thin wings the simulated lift is currently 50–66% low.`;
+  if (!me.limits.objectives.includes(opt.objective) || opt.objective === "drag_fixed_lift") opt.objective = "drag";
+  const goalNote = () => {
+    const lifty = unvalidated.includes(opt.objective);
+    const oneAngle = S.envelope.aoa_count < 2 || S.envelope.aoa_max === S.envelope.aoa_min;
+    $("#objective-note").classList.toggle("hidden", !lifty);
+    $("#objective-note").innerHTML = lifty ? `Uses the tunnel's lift, which reads low on thin wings (<a href="/validation" target="_blank">validation</a>):
+      good for comparing designs, not for exact lift numbers.${oneAngle ? " <b>Add angles of attack</b> in the flight conditions — at a single angle a body may make almost no lift." : ""}` : "";
+  };
+  goalNote();
   sel.value = opt.objective;
-  sel.onchange = () => { opt.objective = sel.value; saveSettings(); summaries(); };
+  sel.onchange = () => { opt.objective = sel.value; goalNote(); saveSettings(); summaries(); };
 }
 
 function renderAspects() {
@@ -776,9 +782,50 @@ $("#keep_stability").addEventListener("change", (e) => { opt.keep_stability = e.
 $("#hold_wing_area").checked = !!opt.hold_wing_area;
 $("#hold_wing_area").addEventListener("change", (e) => { opt.hold_wing_area = e.target.checked; saveSettings(); });
 
+function effortIters(k) {
+  const max = maxIter();
+  const base = tunnel === "supersonic" || winged() ? { quick: 30, balanced: 80, thorough: 200 } : { quick: 32, balanced: 60, thorough: 120 };
+  return Math.max(4, Math.min(max, base[k]));
+}
+function currentEffort() {
+  const ks = ["quick", "balanced", "thorough"];
+  return ks.reduce((best, k) => (Math.abs(effortIters(k) - opt.iterations) < Math.abs(effortIters(best) - opt.iterations) ? k : best), ks[0]);
+}
+function renderEffort() {
+  const cur = currentEffort();
+  const order = ["quick", "balanced", "thorough"];
+  $$("#effort button").forEach((b) => {
+    // a preset the plan's design limit makes identical to the one below it
+    const i = order.indexOf(b.dataset.v);
+    const capped = i > 0 && effortIters(b.dataset.v) === effortIters(order[i - 1]);
+    b.disabled = capped;
+    b.title = capped ? `Your plan allows up to ${maxIter()} designs per optimization` : "";
+    b.classList.toggle("on", b.dataset.v === cur);
+  });
+  const capped = effortIters("thorough") === effortIters("quick");
+  $("#effort-note").textContent = `Up to ${opt.iterations} designs. ${capped ? "Your plan's limit — Pro raises it." : cur === "quick" ? "A first look."
+    : cur === "balanced" ? "Good for most designs." : "Leaves no stone unturned; slowest."}`;
+}
+$$("#effort button").forEach((b) => b.addEventListener("click", () => {
+  opt.iterations = effortIters(b.dataset.v);
+  $("#iterations").value = opt.iterations;
+  $("#iterations_o").textContent = String(opt.iterations);
+  renderEffort();
+  estimates();
+  saveSettings();
+}));
+$$("#opt-mode button").forEach((b) => b.addEventListener("click", () => { opt.mode = b.dataset.v; renderOptMode(); estimates(); saveSettings(); }));
+
 function renderOptMode() {
   const tm = S.template;
-  $("#opt-aspects").classList.toggle("hidden", !!tm);
+  const auto = !advOn || opt.mode !== "custom";
+  $("#opt-aspects").classList.toggle("hidden", !!tm || auto);
+  $("#mode-row").classList.toggle("hidden", !!tm);
+  $$("#opt-mode button").forEach((b) => b.classList.toggle("on", b.dataset.v === (auto ? "auto" : "custom")));
+  $("#mode-note").innerHTML = auto
+    ? "AeroSculpt tries whole-body changes (nose, tail, cross-section, length, camber, edges) and new geometry it designs itself — a boat-tail, a rounded front, rear slant and diffuser angles — keeps what measurably helps, then designs again on the improved shape until nothing more helps. Protected regions are respected."
+    : "Only the whole-body changes ticked below, plus any Shape features you added with dimensions unlocked.";
+  renderEffort();
   $("#max-change-row").classList.toggle("hidden", !!tm);
   $("#opt-params").classList.toggle("hidden", !tm);
   $("#opt-wing").classList.toggle("hidden", !(winged() && tunnel !== "supersonic"));
@@ -786,8 +833,8 @@ function renderOptMode() {
   $("#thick-row").classList.toggle("hidden", !tm);
   $("#verify-row").classList.add("hidden");
   $("#opt-lead").textContent = tm
-    ? "Changes the named dimensions you left unlocked, within their ranges: a screening run ranks them, the most influential are optimized, and the best designs are confirmed at full resolution."
-    : "Reshapes the body within your regions and limits: a screening run ranks the shape controls, the most influential are optimized, and the best designs are confirmed at full resolution.";
+    ? "Changes the named dimensions you left unlocked, within their ranges, and keeps only what the wind tunnel confirms helps."
+    : "Press Optimize and AeroSculpt redesigns the body on its own: it adds and tests new shapes, keeps only what the wind tunnel confirms helps, and repeats on the improved design until nothing more helps.";
   if (tm && dparams) {
     const free = dparams.unlocked();
     $("#opt-params").innerHTML = `${icon("sliders")}<div class="small"><b style="color:var(--text)">${free.length} free parameter${free.length === 1 ? "" : "s"}</b>${free.length
@@ -823,18 +870,28 @@ function estimates() {
   // screened design also runs at a sub-cell shift (paired)
   const nFeat = feats ? feats.freeParams().filter(([f, p]) => !f.optional || p.key === "_use")
     .reduce((n, [, p]) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) * (winged() ? 1 : 2) : 0;
-  const nScreen = nFeat + (S.template && dparams ? dparams.unlocked().reduce((n, p) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0) : opt.aspects.length * 1.5);
+  // automatic mode screens every whole-body control the plan allows and about four ideas of its own
+  const autoMode = !S.template && (!advOn || opt.mode !== "custom");
+  const nAspects = autoMode ? Math.min(6, me.limits.max_aspects) * 1.35 + 4 : opt.aspects.length * 1.5;
+  const nScreen = nFeat + (S.template && dparams ? dparams.unlocked().reduce((n, p) => n + (p.kind === "choice" ? p.choices.length - 1 : 1), 0)
+    : nAspects * (tunnel === "supersonic" ? 1 : 2));
   const nA = Math.min(3, aoas.length);
   const perX = withProps ? nA * speeds.length : nA * reGroups().n;
   const exploreCfd = !winged();
   const xRuns = exploreCfd ? perX * (opt.iterations + 3) : 0;
-  const cRuns = winged() ? 0 : 6 * perDesign;      // baseline, its error probe, 2 candidates, each again shifted
+  const cRuns = winged() ? 0 : 3 * perDesign + 6 * (withProps ? speeds.length : reGroups().n);   // baseline + 2 candidates; each at both shifts, one angle
   const credits = Math.max(1, Math.ceil(xRuns * (catalog.credits_per_run[xf] || 1) + cRuns * per));
   const secs = (exploreCfd ? xRuns * PER_RUN_S[xf] * 0.6 : opt.iterations * 1.5) + (cRuns ? time(cRuns, fidelity) : 0);
   $("#run-optimize").innerHTML = `${icon("sparkles")}Optimize design`;
-  $("#optimize-est").innerHTML = `≈ ${Math.round(nScreen)} screening + up to ${Math.max(0, opt.iterations - Math.round(nScreen))} search designs on ${exploreCfd ? `${xf} CFD (${nA} angle${nA > 1 ? "s" : ""})` : "the wing model"}${
-    cRuns ? ` · 6 confirmation runs at ${FID_LABEL[fidelity].toLowerCase()} fidelity` : " · confirmed at full model resolution"} · ≈ ${fmtDuration(secs)} · up to ${credits} credit${credits > 1 ? "s" : ""}` +
-    (opt.iterations < nScreen + 2 ? ` · <span style="color:var(--warning-text)">budget too small for the screening — lock some parameters or raise it</span>` : "") +
+  $("#optimize-est").innerHTML = (advOn
+    ? `≈ ${Math.round(nScreen)} screening + up to ${Math.max(0, opt.iterations - Math.round(nScreen))} search designs on ${exploreCfd ? `${xf} CFD (${nA} angle${nA > 1 ? "s" : ""})` : "the wing model"}${
+      cRuns ? ` · ${cRuns} confirmation runs at ${FID_LABEL[fidelity].toLowerCase()} fidelity` : " · confirmed at full model resolution"}`
+    : `Tries up to ${opt.iterations} designs, then double-checks the best on a finer grid`) +
+    ` · ≈ ${fmtDuration(secs)} · up to ${credits} credit${credits > 1 ? "s" : ""}` +
+    (opt.iterations >= nScreen + 2 ? ""
+      : advOn ? ` · <span style="color:var(--warning-text)">budget too small for the screening — lock some parameters or raise it</span>`
+      : opt.iterations >= maxIter() ? ` · <span style="color:var(--warning-text)">your plan's design limit leaves some ideas untested</span>`
+      : ` · Balanced or Thorough gets to every idea`) +
     (credits > me.credits_left ? ` · <span style="color:var(--critical-text)">needs more credits</span>` : "");
   renderOptMode();
   renderVerify();
@@ -899,9 +956,9 @@ function readyChecks() {
     out.push({ s: "warn", t: "<b>Design-only regions</b> squeeze whole-body changes into small zones, which fold where they fade out. To change one part, use a Shape feature instead.",
       fix: [["Open shape features", () => openSection("features")]] });
   }
-  if (!S.template && !(S.features || []).some((f) => f.enabled !== false)) {
-    out.push({ s: "tip", t: "For new geometry — a boat-tail, a rounded front, slants — let AeroSculpt propose it.",
-      fix: [["Generate design ideas", () => { openSection("features"); const b = $("#ft-generate"); if (b) b.click(); }]] });
+  if (!S.template && !S.zones.some((z) => z.type === "protect")) {
+    out.push({ s: "tip", t: "<b>Nothing is protected.</b> Optimizing may reshape or tuck in any part — wheels, mirrors, mounts, a cockpit. Box the parts that must stay as they are.",
+      fix: [["Protect a part", () => openSection("protect")]] });
   }
   return out;
 }
@@ -915,7 +972,7 @@ function renderReady() {
   box.classList.toggle("all-ok", !issues);
   box.innerHTML = `<div class="rh">${icon(issues ? "alert" : "check")}<span>${issues ? `Before you run · ${issues} thing${issues > 1 ? "s" : ""} to check` : "Ready to run"}</span>
       <span class="grow"></span><button class="icon-btn" type="button" id="ready-hide" title="Hide">${icon("x", "i sm")}</button></div>
-    <p class="steps">Model → shape changes → flight conditions → Simulate → Optimize</p>
+    <p class="steps">Check the model → set the flight conditions → Simulate to see how it flies → Optimize to let AeroSculpt redesign it</p>
     <ul>${checks.map((c, i) => `<li class="${c.s}">${icon(READY_ICON[c.s])}<div>${c.t}${c.fix && c.fix.length ? `<div class="fix">${c.fix.map((f, j) =>
       `<button class="btn sm${j === 0 ? " primary" : ""}" type="button" data-fix="${i}:${j}">${esc(f[0])}</button>`).join("")}</div>` : ""}</div></li>`).join("")}</ul>`;
   $$("[data-fix]", box).forEach((b) => b.addEventListener("click", () => { const [i, j] = b.dataset.fix.split(":").map(Number); checks[i].fix[j][1](); }));
@@ -947,12 +1004,12 @@ function jobSpec(kind) {
   const spec = { kind, tunnel, units: S.units, ...(S.units === "custom" ? { unit_scale: S.unit_scale } : {}), forward: S.forward, up: S.up, zones: S.zones, features: S.features || [] };
   if (tunnel === "supersonic") spec.hyper = S.hyper;
   else Object.assign(spec, { fidelity, envelope: S.envelope, propellers: S.propellers });
-  if (kind === "optimize") spec.optimize = { ...opt };
+  if (kind === "optimize") spec.optimize = { ...opt, mode: advOn ? opt.mode : "auto" };
   return spec;
 }
 async function submit(kind, btn) {
   const freeFeat = feats ? feats.freeParams().length : 0;
-  if (kind === "optimize" && !S.template && !opt.aspects.length && !freeFeat) return toast("Choose at least one aspect the optimizer may change, or unlock a shape-feature dimension.", "bad");
+  if (kind === "optimize" && !S.template && advOn && opt.mode === "custom" && !opt.aspects.length && !freeFeat) return toast("Choose at least one aspect the optimizer may change, or switch “What may change” to Everything.", "bad");
   if (kind === "optimize" && S.template && dparams && !dparams.unlocked().length && !freeFeat) return toast("Unlock at least one design parameter for the optimizer.", "bad");
   busy(btn, true, kind === "optimize" ? "Queuing optimization…" : "Queuing…");
   try {
@@ -1113,6 +1170,22 @@ $("#st-cancel").addEventListener("click", async () => {
 });
 $("#st-log").addEventListener("click", () => $("#log").classList.toggle("hidden"));
 $("#st-results").addEventListener("click", () => $("#main").classList.toggle("show-right"));
+// simple view for beginners; "Show advanced options" brings back everything (remembered per browser)
+function setAdvanced(on) {
+  advOn = on;
+  $("#main").classList.toggle("adv", on);
+  $("#adv-toggle").checked = on;
+  try { localStorage.setItem("as.advanced", on ? "1" : "0"); } catch (e) { /* private mode */ }
+  if (!on) {
+    opt.iterations = effortIters(currentEffort());
+    $("#iterations").value = opt.iterations;
+    $("#iterations_o").textContent = String(opt.iterations);
+  }
+  renderOptMode();
+  estimates();
+}
+$("#adv-toggle").addEventListener("change", (e) => setAdvanced(e.target.checked));
+
 // the results panel folds away for a bigger 3D view (remembered per browser)
 function setRightCollapsed(on) {
   $("#main").classList.toggle("right-collapsed", on);
@@ -1122,6 +1195,7 @@ function setRightCollapsed(on) {
 $("#right-collapse").addEventListener("click", () => setRightCollapsed(true));
 $("#right-open").addEventListener("click", () => setRightCollapsed(false));
 try { if (localStorage.getItem("as.rightCollapsed") === "1") setRightCollapsed(true); } catch (e) { /* private mode */ }
+try { if (localStorage.getItem("as.advanced") === "1") setAdvanced(true); } catch (e) { /* private mode */ }
 const narrow = matchMedia("(max-width: 1050px)");
 const syncNarrow = () => $("#st-results").classList.toggle("hidden", !narrow.matches);
 narrow.addEventListener("change", syncNarrow);
@@ -1562,6 +1636,18 @@ function drawCharts(base, best) {
     if (result.setup.method !== "wing model") lineChart(card("Pitching moment vs angle", "about the body centre"), series("cm_pitch"),
       { height: 150, xName: "α", fmtX: fmtA, fmtY: (v) => sig(v, 3) });
   }
+  if (env.aoas.length > 1) {
+    // the drag polar: lift against drag over the angles, at this speed
+    const polarLD = (polar) => polar.map((q) => [q.speeds[cond.v].cd, q.cl]);
+    const ser = [{ name: best ? "Baseline" : "This design", color: "var(--series-1)", points: polarLD(base), dots: true, faded: !!best }];
+    if (best) ser.push({ name: "Optimized", color: "var(--series-3)", points: polarLD(best), dots: true });
+    lineChart(card("Lift vs drag (drag polar)", `${env.speeds[cond.v]} m/s · one point per angle`), ser,
+      { height: 160, xName: "Cd", xLabel: "drag coefficient", fmtX: (v) => sig(v, 3), fmtY: (v) => sig(v, 3),
+        highlight: { x: sel[cond.a].speeds[cond.v].cd, y: sel[cond.a].cl } });
+  } else {
+    box.insertAdjacentHTML("beforeend", `<p class="small muted" style="margin:0 0 10px">${icon("info", "i sm")} Lift curves and the lift-vs-drag polar need
+      two or more angles of attack: add them in the flight conditions.</p>`);
+  }
   const hi = sel[cond.a].speeds[sel[cond.a].speeds.length - 1];
   if (env.speeds.length > 1 && hi.mach > 0.5 && hi.compressibility) {
     const cdm = (polar) => polar[cond.a].speeds.map((s) => [s.mach, s.cd]);
@@ -1581,6 +1667,11 @@ function drawCharts(base, best) {
     if (best) ser.push({ name: "Optimized", color: "var(--series-3)", points: drag(best), dots: true });
     lineChart(card("Drag force vs airspeed", `${env.aoas[cond.a]}°`), ser,
       { height: 150, xName: "V", xLabel: "airspeed (m/s)", fmtY: (v) => fmtForce(v), highlight: { x: env.speeds[cond.v], y: sel[cond.a].speeds[cond.v].drag_N } });
+    const lift = (polar) => polar[cond.a].speeds.map((s) => [s.v, s.lift_N]);
+    const ls = [{ name: best ? "Baseline" : "This design", color: "var(--series-1)", points: lift(base), dots: true, faded: !!best }];
+    if (best) ls.push({ name: "Optimized", color: "var(--series-3)", points: lift(best), dots: true });
+    lineChart(card("Lift force vs airspeed", `${env.aoas[cond.a]}° · up is positive`), ls,
+      { height: 150, xName: "V", xLabel: "airspeed (m/s)", fmtY: (v) => fmtForce(v), highlight: { x: env.speeds[cond.v], y: sel[cond.a].speeds[cond.v].lift_N } });
   }
   if (!box.children.length) box.innerHTML = `<p class="small muted">Add more angles or airspeeds to the envelope to see curves.</p>`;
 }
@@ -1608,6 +1699,18 @@ function renderHistoryTab() {
     <div class="small muted" style="margin:4px 0 12px">${r.objective === "ld" ? "change in best L/D" : fixedLift ? `drag at the lift needed, averaged over ${env.speeds.length} speed${env.speeds.length > 1 ? "s" : ""}`
       : "average change in drag across all " + env.aoas.length * env.speeds.length + " conditions"}
       ${st ? ` · ${st.designs_explored} designs explored` : ` · best design #${r.best_index} of ${r.history.length - 1}`}${r.verified ? ` · confirmed at ${esc(r.verified.fidelity)} fidelity` : ""}</div>
+    ${r.rounds && r.rounds.length > 1 ? `<ul class="rounds">${r.rounds.map((q) => `<li><span class="rn">Round ${q.round}</span><span>${q.reliable
+      ? `<b style="color:var(--good-text)">${fmtPct(q.change, 1, true)}</b>${q.adopted.length ? " · added " + q.adopted.map((a) => esc(a.replace(/^Add /, ""))).join(", ") : ""}`
+      : `<span class="muted">nothing more beat the measured error — done</span>`}</span></li>`).join("")}</ul>` : ""}
+    ${r.objective_indicative ? `<p class="small muted" style="margin:0 0 10px">${icon("info", "i sm")} This goal uses the tunnel's lift, which reads low on thin wings: compare designs, don't size from the lift numbers.</p>` : ""}
+    ${(() => {
+      // a body only ~10 cells tall: the gain is real for this grid but its size is rough
+      const c = st && st.confirm_cells ? st.confirm_cells.filter((v) => v > 0) : [];
+      const n = c.length ? Math.round(Math.min(...c)) : null;
+      return !noReliable && good && n && n < 16 ? `<div class="notice warn" style="margin:0 0 10px">${icon("alert")}<div>The body was only about ${n} cells
+        tall on the ${esc(st.confirm_grid || st.confirm)} grid, so the size of this gain is rough: coarse grids exaggerate what smoothing and tucking-in parts are worth.
+        Check the optimized design at a higher fidelity before relying on the number, and protect parts that must stay (wheels, mirrors, cabin).</div></div>` : "";
+    })()}
     ${!noReliable && good ? (() => {
       const changed = (r.variables || []).filter((v) => {
         const b = v.base, x = r.best_values[v.key];
@@ -1776,6 +1879,7 @@ function applyTunnel(t, user = false) {
   });
   $("#iterations").max = maxIter();
   opt.iterations = Math.min(Math.max(Number(opt.iterations) || 8, 1), maxIter());
+  if (!advOn) opt.iterations = effortIters(currentEffort());     // the simple view runs one of the three presets
   $("#iterations").value = opt.iterations;
   $("#iterations_o").textContent = opt.iterations;
   renderZoneButtons();
