@@ -177,6 +177,7 @@ def optimize(r):
     features = getattr(r, "features", None) or []
     body = getattr(r, "base_body", r.frame.body)
     aspects = []
+    r._progress(0.002, "Preparing the shape controls")
     if tmpl:
         space = TemplateSpace(tmpl["id"], tmpl.get("values", {}), o.get("params"), r.frame.center, constraints, r.zones)
         winged = tmpl["id"] in ("uav", "wing")
@@ -227,15 +228,21 @@ def optimize(r):
     lift = FixedLift(r, space, o.get("mass_kg"), bool(o.get("keep_stability", True))) if winged else None
     wing_only = winged          # winged designs never need the CFD in the loop (see the module notes)
 
-    # grid sized once for every shape the bounds allow (extremes along each parameter)
+    # grid sized once for every shape the bounds allow (extremes along each parameter); only their
+    # extent matters, so feature unions skip the buried-face bookkeeping
+    def outline(vals):
+        return space.build(vals, hidden=False) if isinstance(space, FeatureSpace) else space.build(vals)
+
+    r._progress(0.005, "Sizing the wind tunnel for every shape the limits allow")
+
     extremes = [space.base.mesh]
     for v in space.vars:
         for val in (v.choices or [v.lo, v.hi]):
-            c = space.build({v.key: val})
+            c = outline({v.key: val})
             if not c.reason:
                 extremes.append(c.mesh)
     for side in ("lo", "hi"):
-        c = space.build({v.key: getattr(v, side) for v in space.vars if not v.categorical})
+        c = outline({v.key: getattr(v, side) for v in space.vars if not v.categorical})
         if not c.reason:
             extremes.append(c.mesh)
     lo, hi, r.frontal_plan = r.envelope_box(extremes, space.dfm if mode == "aspects" else None)

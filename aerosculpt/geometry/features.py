@@ -852,9 +852,10 @@ def mark_hidden(mesh: Mesh):
 
 
 # ---- applying the timeline ---------------------------------------------------------------------------------
-def apply(mesh: Mesh, features, frame: Frame, overrides=None):
+def apply(mesh: Mesh, features, frame: Frame, overrides=None, hidden=True):
     """Body-frame mesh -> (mesh with every enabled feature applied, problems, info).
-    overrides: {(feature id, param key): value} from the optimizer."""
+    overrides: {(feature id, param key): value} from the optimizer. hidden=False skips marking
+    buried faces (seconds on a refined mesh): enough for a shape's size, never for a CFD run."""
     problems, added = [], []
     m = mesh
     for f in features or []:
@@ -908,7 +909,7 @@ def apply(mesh: Mesh, features, frame: Frame, overrides=None):
         if shell is not None:
             m = Mesh(np.vstack([m.v, shell.v]), np.vstack([m.f, shell.f + len(m.v)]))
             added.append(f["id"])
-    m.hidden = mark_hidden(m)
+    m.hidden = mark_hidden(m) if hidden else None
     lo, hi = m.bbox()
     info = {"overall_length": float(hi[0] - lo[0]), "overall_width": float(hi[1] - lo[1]),
             "overall_height": float(hi[2] - lo[2]), "faces": m.n_faces,

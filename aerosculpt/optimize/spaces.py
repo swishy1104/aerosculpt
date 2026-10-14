@@ -301,12 +301,13 @@ class FeatureSpace:
                 inner[k] = v
         return inner, over
 
-    def build(self, values, preview=False) -> Candidate:
+    def build(self, values, preview=False, hidden=None) -> Candidate:
+        """hidden: mark buried faces (default: unless a preview, which only checks size and volume)."""
         inner_vals, over = self.split(values)
         for fid, u in self.use.items():
             over.setdefault((fid, "_use"), u)
         ic = self.inner.build(inner_vals, preview=preview)
-        mesh, probs, info = self.FT.apply(ic.mesh, self.features, self.frame, over)
+        mesh, probs, info = self.FT.apply(ic.mesh, self.features, self.frame, over, hidden=not preview if hidden is None else hidden)
         vals = dict(ic.values)
         # every free dimension, also of ideas not added yet: once one is adopted its dimensions join
         # the search starting from these values
