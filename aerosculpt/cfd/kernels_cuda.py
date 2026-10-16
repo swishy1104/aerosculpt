@@ -80,7 +80,8 @@ def apply_forcing(f, idx, Fb, scale):
 
 
 @cuda.jit(fastmath=True, cache=True)
-def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, tau_bulk, ref, fpart):
+def stream_collide(f, fn, flags, bidx, qtab, wall, tau_x, tau_y, tau_z, feq_ff, smag, tau_bulk, ref, fpart,
+                   wmod, nu_w, zg, ug):
     """One fused pull-stream + collision step, one thread per cell (see kernels.py for the
     model). Wall-link forces are added to fpart[x] with atomics (fpart zeroed beforehand)."""
     z, y, x = cuda.grid(3)
@@ -157,18 +158,62 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
         My = F(0.0)
         Mz = F(0.0)
         f0 = f[0, x, y, z]
+        wsx = wall[b, 0]
+        wsy = wall[b, 1]
+        wsz = wall[b, 2]
+        if wmod > F(0.0):
+            wr = f[0, x, y, z] + f[1, x, y, z] + f[2, x, y, z] + f[3, x, y, z] + f[4, x, y, z] + f[5, x, y, z] + f[6, x, y, z] + f[7, x, y, z] + f[8, x, y, z] + f[9, x, y, z] + f[10, x, y, z] + f[11, x, y, z] + f[12, x, y, z] + f[13, x, y, z] + f[14, x, y, z] + f[15, x, y, z] + f[16, x, y, z] + f[17, x, y, z] + f[18, x, y, z]
+            wjx = f[1, x, y, z] - f[2, x, y, z] + f[7, x, y, z] - f[8, x, y, z] + f[9, x, y, z] - f[10, x, y, z] + f[11, x, y, z] - f[12, x, y, z] + f[13, x, y, z] - f[14, x, y, z]
+            wjy = f[3, x, y, z] - f[4, x, y, z] + f[7, x, y, z] - f[8, x, y, z] - f[9, x, y, z] + f[10, x, y, z] + f[15, x, y, z] - f[16, x, y, z] + f[17, x, y, z] - f[18, x, y, z]
+            wjz = f[5, x, y, z] - f[6, x, y, z] + f[11, x, y, z] - f[12, x, y, z] - f[13, x, y, z] + f[14, x, y, z] + f[15, x, y, z] - f[16, x, y, z] - f[17, x, y, z] + f[18, x, y, z]
+            wux = wjx / wr - wsx
+            wuy = wjy / wr - wsy
+            wuz = wjz / wr - wsz
+            wnx = wall[b, 3]
+            wny = wall[b, 4]
+            wnz = wall[b, 5]
+            wy = wall[b, 6]
+            wun = wux * wnx + wuy * wny + wuz * wnz
+            wtx = wux - wun * wnx
+            wty = wuy - wun * wny
+            wtz = wuz - wun * wnz
+            wU = math.sqrt(wtx * wtx + wty * wty + wtz * wtz)
+            if wU > F(1.0e-7) and wy > F(0.0):
+                wut = math.sqrt(nu_w * wU / wy)
+                if wy * wut / nu_w > F(11.0):
+                    for wit in range(5):
+                        wut = F(0.41) * wU / math.log(F(9.0) * wy * wut / nu_w)
+                wtau = wall[b, 7]
+                if wtau <= tau0:
+                    wtau = tau0
+                wsl = wU - wut * wut * wy / ((wtau - F(0.5)) * F(0.3333333333333333))
+                wsl = wmod * min(max(wsl, F(0.0)), wU) / wU
+                wtx = wsl * wtx
+                wty = wsl * wty
+                wtz = wsl * wtz
+            else:
+                wtx = F(0.0)
+                wty = F(0.0)
+                wtz = F(0.0)
+            wall[b, 8] += F(0.02) * (wtx - wall[b, 8])
+            wall[b, 9] += F(0.02) * (wty - wall[b, 9])
+            wall[b, 10] += F(0.02) * (wtz - wall[b, 10])
+            wsx += wall[b, 8]
+            wsy += wall[b, 9]
+            wsz += wall[b, 10]
         q = qtab[b, 1]
         if q < F(0.0):
             f1 = f[1, xm, y, z]
         else:
             fj = f[2, x, y, z]
+            cuw = F(0.3333333333333333) * (wsx)
             if q < F(0.5):
                 if flags[xp, y, z] != 1:
-                    f1 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[2, xp, y, z]
+                    f1 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[2, xp, y, z] + cuw
                 else:
-                    f1 = fj
+                    f1 = fj + cuw
             else:
-                f1 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[1, x, y, z]
+                f1 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[1, x, y, z] + cuw * F(0.5) / q
             s = fj + f1
             dFx = -F(1.0) * s
             dFy = F(0.0) * s
@@ -187,13 +232,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f2 = f[2, xp, y, z]
         else:
             fj = f[1, x, y, z]
+            cuw = F(0.3333333333333333) * (- wsx)
             if q < F(0.5):
                 if flags[xm, y, z] != 1:
-                    f2 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[1, xm, y, z]
+                    f2 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[1, xm, y, z] + cuw
                 else:
-                    f2 = fj
+                    f2 = fj + cuw
             else:
-                f2 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[2, x, y, z]
+                f2 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[2, x, y, z] + cuw * F(0.5) / q
             s = fj + f2
             dFx = F(1.0) * s
             dFy = F(0.0) * s
@@ -212,13 +258,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f3 = f[3, x, ym, z]
         else:
             fj = f[4, x, y, z]
+            cuw = F(0.3333333333333333) * (wsy)
             if q < F(0.5):
                 if flags[x, yp, z] != 1:
-                    f3 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[4, x, yp, z]
+                    f3 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[4, x, yp, z] + cuw
                 else:
-                    f3 = fj
+                    f3 = fj + cuw
             else:
-                f3 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[3, x, y, z]
+                f3 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[3, x, y, z] + cuw * F(0.5) / q
             s = fj + f3
             dFx = F(0.0) * s
             dFy = -F(1.0) * s
@@ -237,13 +284,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f4 = f[4, x, yp, z]
         else:
             fj = f[3, x, y, z]
+            cuw = F(0.3333333333333333) * (- wsy)
             if q < F(0.5):
                 if flags[x, ym, z] != 1:
-                    f4 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[3, x, ym, z]
+                    f4 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[3, x, ym, z] + cuw
                 else:
-                    f4 = fj
+                    f4 = fj + cuw
             else:
-                f4 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[4, x, y, z]
+                f4 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[4, x, y, z] + cuw * F(0.5) / q
             s = fj + f4
             dFx = F(0.0) * s
             dFy = F(1.0) * s
@@ -262,38 +310,45 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f5 = f[5, x, y, zm]
         else:
             fj = f[6, x, y, z]
+            gl = zg >= 0 and z - 1 <= zg
+            if gl:
+                cuw = F(0.0)
+            else:
+                cuw = F(0.3333333333333333) * (wsz)
             if q < F(0.5):
                 if flags[x, y, zp] != 1:
-                    f5 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[6, x, y, zp]
+                    f5 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[6, x, y, zp] + cuw
                 else:
-                    f5 = fj
+                    f5 = fj + cuw
             else:
-                f5 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[5, x, y, z]
-            s = fj + f5
-            dFx = F(0.0) * s
-            dFy = F(0.0) * s
-            dFz = -F(1.0) * s
-            Fx += dFx
-            Fy += dFy
-            Fz += dFz
-            rx = xf - q * F(0.0) - refx
-            ry = yf - q * F(0.0) - refy
-            rz = zf - q * F(1.0) - refz
-            Mx += ry * dFz - rz * dFy
-            My += rz * dFx - rx * dFz
-            Mz += rx * dFy - ry * dFx
+                f5 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[5, x, y, z] + cuw * F(0.5) / q
+            if not gl:
+                s = fj + f5
+                dFx = F(0.0) * s
+                dFy = F(0.0) * s
+                dFz = -F(1.0) * s
+                Fx += dFx
+                Fy += dFy
+                Fz += dFz
+                rx = xf - q * F(0.0) - refx
+                ry = yf - q * F(0.0) - refy
+                rz = zf - q * F(1.0) - refz
+                Mx += ry * dFz - rz * dFy
+                My += rz * dFx - rx * dFz
+                Mz += rx * dFy - ry * dFx
         q = qtab[b, 6]
         if q < F(0.0):
             f6 = f[6, x, y, zp]
         else:
             fj = f[5, x, y, z]
+            cuw = F(0.3333333333333333) * (- wsz)
             if q < F(0.5):
                 if flags[x, y, zm] != 1:
-                    f6 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[5, x, y, zm]
+                    f6 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[5, x, y, zm] + cuw
                 else:
-                    f6 = fj
+                    f6 = fj + cuw
             else:
-                f6 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[6, x, y, z]
+                f6 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[6, x, y, z] + cuw * F(0.5) / q
             s = fj + f6
             dFx = F(0.0) * s
             dFy = F(0.0) * s
@@ -312,13 +367,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f7 = f[7, xm, ym, z]
         else:
             fj = f[8, x, y, z]
+            cuw = F(0.16666666666666666) * (wsx + wsy)
             if q < F(0.5):
                 if flags[xp, yp, z] != 1:
-                    f7 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[8, xp, yp, z]
+                    f7 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[8, xp, yp, z] + cuw
                 else:
-                    f7 = fj
+                    f7 = fj + cuw
             else:
-                f7 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[7, x, y, z]
+                f7 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[7, x, y, z] + cuw * F(0.5) / q
             s = fj + f7
             dFx = -F(1.0) * s
             dFy = -F(1.0) * s
@@ -337,13 +393,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f8 = f[8, xp, yp, z]
         else:
             fj = f[7, x, y, z]
+            cuw = F(0.16666666666666666) * (- wsx - wsy)
             if q < F(0.5):
                 if flags[xm, ym, z] != 1:
-                    f8 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[7, xm, ym, z]
+                    f8 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[7, xm, ym, z] + cuw
                 else:
-                    f8 = fj
+                    f8 = fj + cuw
             else:
-                f8 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[8, x, y, z]
+                f8 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[8, x, y, z] + cuw * F(0.5) / q
             s = fj + f8
             dFx = F(1.0) * s
             dFy = F(1.0) * s
@@ -362,13 +419,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f9 = f[9, xm, yp, z]
         else:
             fj = f[10, x, y, z]
+            cuw = F(0.16666666666666666) * (wsx - wsy)
             if q < F(0.5):
                 if flags[xp, ym, z] != 1:
-                    f9 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[10, xp, ym, z]
+                    f9 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[10, xp, ym, z] + cuw
                 else:
-                    f9 = fj
+                    f9 = fj + cuw
             else:
-                f9 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[9, x, y, z]
+                f9 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[9, x, y, z] + cuw * F(0.5) / q
             s = fj + f9
             dFx = -F(1.0) * s
             dFy = F(1.0) * s
@@ -387,13 +445,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f10 = f[10, xp, ym, z]
         else:
             fj = f[9, x, y, z]
+            cuw = F(0.16666666666666666) * (- wsx + wsy)
             if q < F(0.5):
                 if flags[xm, yp, z] != 1:
-                    f10 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[9, xm, yp, z]
+                    f10 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[9, xm, yp, z] + cuw
                 else:
-                    f10 = fj
+                    f10 = fj + cuw
             else:
-                f10 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[10, x, y, z]
+                f10 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[10, x, y, z] + cuw * F(0.5) / q
             s = fj + f10
             dFx = F(1.0) * s
             dFy = -F(1.0) * s
@@ -412,38 +471,45 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f11 = f[11, xm, y, zm]
         else:
             fj = f[12, x, y, z]
+            gl = zg >= 0 and z - 1 <= zg
+            if gl:
+                cuw = F(0.16666666666666666) * (F(1.0) * ug)
+            else:
+                cuw = F(0.16666666666666666) * (wsx + wsz)
             if q < F(0.5):
                 if flags[xp, y, zp] != 1:
-                    f11 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[12, xp, y, zp]
+                    f11 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[12, xp, y, zp] + cuw
                 else:
-                    f11 = fj
+                    f11 = fj + cuw
             else:
-                f11 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[11, x, y, z]
-            s = fj + f11
-            dFx = -F(1.0) * s
-            dFy = F(0.0) * s
-            dFz = -F(1.0) * s
-            Fx += dFx
-            Fy += dFy
-            Fz += dFz
-            rx = xf - q * F(1.0) - refx
-            ry = yf - q * F(0.0) - refy
-            rz = zf - q * F(1.0) - refz
-            Mx += ry * dFz - rz * dFy
-            My += rz * dFx - rx * dFz
-            Mz += rx * dFy - ry * dFx
+                f11 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[11, x, y, z] + cuw * F(0.5) / q
+            if not gl:
+                s = fj + f11
+                dFx = -F(1.0) * s
+                dFy = F(0.0) * s
+                dFz = -F(1.0) * s
+                Fx += dFx
+                Fy += dFy
+                Fz += dFz
+                rx = xf - q * F(1.0) - refx
+                ry = yf - q * F(0.0) - refy
+                rz = zf - q * F(1.0) - refz
+                Mx += ry * dFz - rz * dFy
+                My += rz * dFx - rx * dFz
+                Mz += rx * dFy - ry * dFx
         q = qtab[b, 12]
         if q < F(0.0):
             f12 = f[12, xp, y, zp]
         else:
             fj = f[11, x, y, z]
+            cuw = F(0.16666666666666666) * (- wsx - wsz)
             if q < F(0.5):
                 if flags[xm, y, zm] != 1:
-                    f12 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[11, xm, y, zm]
+                    f12 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[11, xm, y, zm] + cuw
                 else:
-                    f12 = fj
+                    f12 = fj + cuw
             else:
-                f12 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[12, x, y, z]
+                f12 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[12, x, y, z] + cuw * F(0.5) / q
             s = fj + f12
             dFx = F(1.0) * s
             dFy = F(0.0) * s
@@ -462,13 +528,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f13 = f[13, xm, y, zp]
         else:
             fj = f[14, x, y, z]
+            cuw = F(0.16666666666666666) * (wsx - wsz)
             if q < F(0.5):
                 if flags[xp, y, zm] != 1:
-                    f13 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[14, xp, y, zm]
+                    f13 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[14, xp, y, zm] + cuw
                 else:
-                    f13 = fj
+                    f13 = fj + cuw
             else:
-                f13 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[13, x, y, z]
+                f13 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[13, x, y, z] + cuw * F(0.5) / q
             s = fj + f13
             dFx = -F(1.0) * s
             dFy = F(0.0) * s
@@ -487,63 +554,76 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f14 = f[14, xp, y, zm]
         else:
             fj = f[13, x, y, z]
+            gl = zg >= 0 and z - 1 <= zg
+            if gl:
+                cuw = F(0.16666666666666666) * (-F(1.0) * ug)
+            else:
+                cuw = F(0.16666666666666666) * (- wsx + wsz)
             if q < F(0.5):
                 if flags[xm, y, zp] != 1:
-                    f14 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[13, xm, y, zp]
+                    f14 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[13, xm, y, zp] + cuw
                 else:
-                    f14 = fj
+                    f14 = fj + cuw
             else:
-                f14 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[14, x, y, z]
-            s = fj + f14
-            dFx = F(1.0) * s
-            dFy = F(0.0) * s
-            dFz = -F(1.0) * s
-            Fx += dFx
-            Fy += dFy
-            Fz += dFz
-            rx = xf - q * -F(1.0) - refx
-            ry = yf - q * F(0.0) - refy
-            rz = zf - q * F(1.0) - refz
-            Mx += ry * dFz - rz * dFy
-            My += rz * dFx - rx * dFz
-            Mz += rx * dFy - ry * dFx
+                f14 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[14, x, y, z] + cuw * F(0.5) / q
+            if not gl:
+                s = fj + f14
+                dFx = F(1.0) * s
+                dFy = F(0.0) * s
+                dFz = -F(1.0) * s
+                Fx += dFx
+                Fy += dFy
+                Fz += dFz
+                rx = xf - q * -F(1.0) - refx
+                ry = yf - q * F(0.0) - refy
+                rz = zf - q * F(1.0) - refz
+                Mx += ry * dFz - rz * dFy
+                My += rz * dFx - rx * dFz
+                Mz += rx * dFy - ry * dFx
         q = qtab[b, 15]
         if q < F(0.0):
             f15 = f[15, x, ym, zm]
         else:
             fj = f[16, x, y, z]
+            gl = zg >= 0 and z - 1 <= zg
+            if gl:
+                cuw = F(0.0)
+            else:
+                cuw = F(0.16666666666666666) * (wsy + wsz)
             if q < F(0.5):
                 if flags[x, yp, zp] != 1:
-                    f15 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[16, x, yp, zp]
+                    f15 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[16, x, yp, zp] + cuw
                 else:
-                    f15 = fj
+                    f15 = fj + cuw
             else:
-                f15 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[15, x, y, z]
-            s = fj + f15
-            dFx = F(0.0) * s
-            dFy = -F(1.0) * s
-            dFz = -F(1.0) * s
-            Fx += dFx
-            Fy += dFy
-            Fz += dFz
-            rx = xf - q * F(0.0) - refx
-            ry = yf - q * F(1.0) - refy
-            rz = zf - q * F(1.0) - refz
-            Mx += ry * dFz - rz * dFy
-            My += rz * dFx - rx * dFz
-            Mz += rx * dFy - ry * dFx
+                f15 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[15, x, y, z] + cuw * F(0.5) / q
+            if not gl:
+                s = fj + f15
+                dFx = F(0.0) * s
+                dFy = -F(1.0) * s
+                dFz = -F(1.0) * s
+                Fx += dFx
+                Fy += dFy
+                Fz += dFz
+                rx = xf - q * F(0.0) - refx
+                ry = yf - q * F(1.0) - refy
+                rz = zf - q * F(1.0) - refz
+                Mx += ry * dFz - rz * dFy
+                My += rz * dFx - rx * dFz
+                Mz += rx * dFy - ry * dFx
         q = qtab[b, 16]
         if q < F(0.0):
             f16 = f[16, x, yp, zp]
         else:
             fj = f[15, x, y, z]
+            cuw = F(0.16666666666666666) * (- wsy - wsz)
             if q < F(0.5):
                 if flags[x, ym, zm] != 1:
-                    f16 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[15, x, ym, zm]
+                    f16 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[15, x, ym, zm] + cuw
                 else:
-                    f16 = fj
+                    f16 = fj + cuw
             else:
-                f16 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[16, x, y, z]
+                f16 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[16, x, y, z] + cuw * F(0.5) / q
             s = fj + f16
             dFx = F(0.0) * s
             dFy = F(1.0) * s
@@ -562,13 +642,14 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f17 = f[17, x, ym, zp]
         else:
             fj = f[18, x, y, z]
+            cuw = F(0.16666666666666666) * (wsy - wsz)
             if q < F(0.5):
                 if flags[x, yp, zm] != 1:
-                    f17 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[18, x, yp, zm]
+                    f17 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[18, x, yp, zm] + cuw
                 else:
-                    f17 = fj
+                    f17 = fj + cuw
             else:
-                f17 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[17, x, y, z]
+                f17 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[17, x, y, z] + cuw * F(0.5) / q
             s = fj + f17
             dFx = F(0.0) * s
             dFy = -F(1.0) * s
@@ -587,26 +668,32 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
             f18 = f[18, x, yp, zm]
         else:
             fj = f[17, x, y, z]
+            gl = zg >= 0 and z - 1 <= zg
+            if gl:
+                cuw = F(0.0)
+            else:
+                cuw = F(0.16666666666666666) * (- wsy + wsz)
             if q < F(0.5):
                 if flags[x, ym, zp] != 1:
-                    f18 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[17, x, ym, zp]
+                    f18 = F(2.0) * q * fj + (F(1.0) - F(2.0) * q) * f[17, x, ym, zp] + cuw
                 else:
-                    f18 = fj
+                    f18 = fj + cuw
             else:
-                f18 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[18, x, y, z]
-            s = fj + f18
-            dFx = F(0.0) * s
-            dFy = F(1.0) * s
-            dFz = -F(1.0) * s
-            Fx += dFx
-            Fy += dFy
-            Fz += dFz
-            rx = xf - q * F(0.0) - refx
-            ry = yf - q * -F(1.0) - refy
-            rz = zf - q * F(1.0) - refz
-            Mx += ry * dFz - rz * dFy
-            My += rz * dFx - rx * dFz
-            Mz += rx * dFy - ry * dFx
+                f18 = fj / (F(2.0) * q) + (F(1.0) - F(1.0) / (F(2.0) * q)) * f[18, x, y, z] + cuw * F(0.5) / q
+            if not gl:
+                s = fj + f18
+                dFx = F(0.0) * s
+                dFy = F(1.0) * s
+                dFz = -F(1.0) * s
+                Fx += dFx
+                Fy += dFy
+                Fz += dFz
+                rx = xf - q * F(0.0) - refx
+                ry = yf - q * -F(1.0) - refy
+                rz = zf - q * F(1.0) - refz
+                Mx += ry * dFz - rz * dFy
+                My += rz * dFx - rx * dFz
+                Mz += rx * dFy - ry * dFx
         cuda.atomic.add(fpart, (x, 0), Fx)
         cuda.atomic.add(fpart, (x, 1), Fy)
         cuda.atomic.add(fpart, (x, 2), Fz)
@@ -635,6 +722,8 @@ def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, 
     Nyz = Pyz - rho * uy * uz
     Qn = math.sqrt(Nxx * Nxx + Nyy * Nyy + Nzz * Nzz + F(2.0) * (Nxy * Nxy + Nxz * Nxz + Nyz * Nyz))
     tau = F(0.5) * (tau0 + math.sqrt(tau0sq + smag * Qn * irho))
+    if b >= 0:
+        wall[b, 7] = tau
     om1 = F(1.0) - F(1.0) / tau
     usq = F(1.5) * (ux * ux + uy * uy + uz * uz)
     tr = Nxx + Nyy + Nzz

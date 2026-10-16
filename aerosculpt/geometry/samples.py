@@ -161,6 +161,35 @@ def blunt_pod(length=1.0, width=0.3, height=0.25, n=40, m=56, nexp=6.0):
     return loft(secs)
 
 
+def ahmed_body(slant_deg=25.0, n_front=10, k=10):
+    """Ahmed body (Ahmed, Ramm & Faltin 1984): 1044 x 389 x 288 mm, front edges rounded with a
+    100 mm radius, sharp longitudinal edges, a 222 mm rear slant at `slant_deg`, square base.
+    Centred on its bounding box; the experiment ran it 50 mm above the floor on four stilts
+    (left out here). Sections are sharp-cornered rectangles, so the rounded front is the
+    intersection of the edge fillets, as on the real model."""
+    L, W, H, R, ls = 1.044, 0.389, 0.288, 0.100, 0.222
+    phi = math.radians(slant_deg)
+    lx = ls * math.cos(phi)
+
+    def rect(x, a, zlo, zhi):
+        t = np.linspace(0.0, 1.0, k, endpoint=False)
+        pts = []
+        for (y0, z0), (y1, z1) in (((a, zlo), (a, zhi)), ((a, zhi), (-a, zhi)), ((-a, zhi), (-a, zlo)), ((-a, zlo), (a, zlo))):
+            pts += [(x, y0 + (y1 - y0) * u, z0 + (z1 - z0) * u) for u in t]
+        return np.array(pts)
+
+    xs = list(R - R * np.cos(np.linspace(0.0, np.pi / 2, n_front)))       # front fillet, finer near the face
+    xs += list(np.linspace(R, L - lx, 6)[1:]) + list(np.linspace(L - lx, L, 6)[1:])
+    secs = []
+    for x in xs:
+        d = R - math.sqrt(max(R * R - (R - x) ** 2, 0.0)) if x < R else 0.0
+        top = H / 2 - d - (max(x - (L - lx), 0.0) * math.tan(phi))
+        secs.append(rect(x - L / 2, W / 2 - d, -H / 2 + d, top))
+    m = loft(secs)
+    lo, hi = m.bbox()
+    return m.transformed(t=-(lo + hi) / 2)
+
+
 def naca4(code="0012", n=60):
     m = int(code[0]) / 100
     p = int(code[1]) / 10

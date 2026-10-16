@@ -73,6 +73,58 @@ def claim_next(worker_id):
         return con.execute("SELECT * FROM jobs WHERE id=?", (row["id"],)).fetchone()
 
 
+def _pid_alive(pid):
+    """Whether a process exists (without signalling it: on Windows os.kill(pid, 0) would send it
+    CTRL+C)."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, pid)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ok = k.GetExitCodeProcess(h, ctypes.byref(code))
+        k.CloseHandle(h)
+        return bool(ok) and code.value == 259          # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def recover_orphans(worker_id):
+    """At start: jobs left 'running' by a process on this machine that no longer exists (a server
+    restart, a crash) go straight back to the queue, instead of waiting STALE_AFTER_S. The
+    result cache then replays every CFD run they had finished, so they resume nearly where they
+    stopped. Returns the requeued job ids."""
+    host = worker_id.rsplit(":", 1)[0]
+    out = []
+    with db() as con:
+        for row in con.execute("SELECT id, worker, log FROM jobs WHERE status='running'").fetchall():
+            w = row["worker"] or ""
+            h, _, pid = w.rpartition(":")
+            if h != host or w == worker_id or not pid.isdigit() or _pid_alive(int(pid)):
+                continue
+            con.execute("UPDATE jobs SET status='queued', progress=0, stage='Queued (resuming after a restart)', "
+                        "log=log || '[resumed after a restart: finished runs come from the cache]\n' WHERE id=?",
+                        (row["id"],))
+            out.append(row["id"])
+    return out
+
+
+def release_jobs(worker_id):
+    """On a clean shutdown: this worker's running job goes back to the queue for the next start."""
+    with db() as con:
+        cur = con.execute("UPDATE jobs SET status='queued', progress=0, stage='Queued (resuming after a restart)' "
+                          "WHERE status='running' AND worker=?", (worker_id,))
+        return cur.rowcount
+
+
 def recover_stale():
     """Jobs whose worker died mid-run: requeue once, then give up."""
     cutoff = time.time() - STALE_AFTER_S
@@ -238,8 +290,18 @@ def record_throughput():
                                      f" ({info['device']})" if info.get("device") else "", info["mlups"])
 
 
+def worker_id():
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
 def worker_loop(stop=None, poll_s=1.0):
-    worker_id = f"{socket.gethostname()}:{os.getpid()}"
+    wid = worker_id()
+    try:
+        back = recover_orphans(wid)
+        if back:
+            logging.getLogger(__name__).info("resuming %d job(s) left running by a previous process", len(back))
+    except Exception:  # noqa: BLE001 - housekeeping never stops the queue
+        traceback.print_exc()
     try:
         warm_up()
     except Exception:  # never block the queue on warm-up
@@ -253,7 +315,7 @@ def worker_loop(stop=None, poll_s=1.0):
             except Exception:  # noqa: BLE001 - housekeeping never stops the queue
                 traceback.print_exc()
             last_recover = time.time()
-        job = claim_next(worker_id)
+        job = claim_next(wid)
         if job is None:
             time.sleep(poll_s)
             continue

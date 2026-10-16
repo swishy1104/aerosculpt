@@ -19,7 +19,7 @@ import warnings
 import numpy as np
 
 from . import kernels as K
-from .tunnel import FLUID, SOLID, RunStats, Tunnel
+from .tunnel import SOLID, RunStats, Tunnel, wall_table
 
 _STATE = {"checked": False, "ok": False, "why": ""}
 BLOCK3 = (32, 4, 1)
@@ -86,6 +86,7 @@ class GpuTunnel(Tunnel):
         self.d_flags = cuda.to_device(self.flags)
         self.d_bidx = cuda.to_device(self.bidx)
         self.d_qtab = cuda.to_device(np.zeros((1, 19), np.float32))
+        self.d_wall = cuda.to_device(self.wall)
         self.d_fpart = cuda.device_array((nx, 6), dtype=np.float32)
         self.d_ref = cuda.to_device(np.zeros(3, np.float32))
         self._upload_tau()
@@ -107,23 +108,20 @@ class GpuTunnel(Tunnel):
 
     def set_geometry(self, mesh, ref_point=None):
         from ..geometry.mesh import shell_info
-        from .voxelize import build_links, voxelize_shells
+        from .voxelize import build_links
         comp, closed = shell_info(mesh)
         tri = self.domain.to_lattice(mesh.triangles().reshape(-1, 3)).reshape(-1, 3, 3)
-        solid, vstats = voxelize_shells(tri, comp, closed, self.domain.shape)
-        solid[:2] = solid[-2:] = False
-        solid[:, :2] = solid[:, -2:] = False
-        solid[:, :, :2] = solid[:, :, -2:] = False
+        solid, vstats = self._voxelize(tri, comp, closed)
         prev = self.flags.copy()
-        interior = (self.flags == FLUID) | (self.flags == SOLID)
-        self.flags[interior] = FLUID
-        self.flags[solid & interior] = SOLID
+        self._place_solid(solid)
         self.bidx, self.qtab, self.link_stats = build_links(self.flags == SOLID, tri)
         self.link_stats.update(vstats)
+        self.wall = wall_table(self.bidx, self.qtab, self.flow, self.zg)
         c = self.cuda
         self.d_flags = c.to_device(self.flags)
         self.d_bidx = c.to_device(self.bidx)
         self.d_qtab = c.to_device(self.qtab if len(self.qtab) else np.zeros((1, 19), np.float32))
+        self.d_wall = c.to_device(self.wall)
         feq0 = K.feq_vector(1.0, 0.0, 0.0, 0.0)
         self.G.fill_changed[self.grid3, BLOCK3](self.d_f, self.d_flags, c.to_device(prev), c.to_device(feq0))
         if ref_point is None:
@@ -189,9 +187,11 @@ class GpuTunnel(Tunnel):
             # those, and let the atomics pile up harmlessly on the steps in between
             if k == n - 1 or (stats is not None and (self.step_count + 1) % record_every == 0):
                 G.zero_rows[zgrid, 128](self.d_fpart)
-            G.stream_collide[self.grid3, BLOCK3](self.d_f, self.d_fn, self.d_flags, self.d_bidx, self.d_qtab,
+            wmod, nu_w, zg, ug = self.wall_args()
+            G.stream_collide[self.grid3, BLOCK3](self.d_f, self.d_fn, self.d_flags, self.d_bidx, self.d_qtab, self.d_wall,
                                                  self.d_tau[0], self.d_tau[1], self.d_tau[2], self._feq(), smag, tb,
-                                                 self.d_ref, self.d_fpart)
+                                                 self.d_ref, self.d_fpart, np.float32(wmod), np.float32(nu_w),
+                                                 np.int32(zg), np.float32(ug))
             G.outlet_copy[self.grid2, (32, 8)](self.d_fn, self.d_flags)
             if self.d_force_idx is not None:
                 ramp = np.float32((self.inlet_speed() / self.flow.u_lat) ** 2)

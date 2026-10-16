@@ -262,7 +262,8 @@ class Runner:
 
     def make_evaluator(self, lo, hi, fid):
         ev = Evaluator(lo, hi, self.frontal_plan, self.L_body, self.ref_area, self.ref_length, fid,
-                       log=self.log, cancel=self._cancel, planform_area=self.planform_area, cache=self.cache)
+                       log=self.log, cancel=self._cancel, planform_area=self.planform_area, cache=self.cache,
+                       ground=getattr(self, "ground", None))
         info = ev.info()
         self.log(f"tunnel {info['grid']} = {info['cells']:,} cells, dx {info['dx_m'] * 1000:.2f} mm, "
                  f"body {info['body_cells']} cells")
@@ -283,12 +284,26 @@ class Runner:
             raise ValueError(f"Mach {mach:.2f} is beyond this tunnel (max 1.2); use the Supersonic tunnel")
         self.mach_max = mach
         self.fid = FIDELITY[RETIRED.get(spec.get("fidelity", "draft"), spec.get("fidelity", "draft"))]
-        self.zones = from_spec([z for z in spec.get("zones", []) if z.get("type") in ("protect", "keep", "design")],
+        zone_items = spec.get("zones", [])
+        wheel_items = [z for z in zone_items if z.get("type") == "wheel"]
+        # wheels are never reshaped: to the optimizer they are protected regions
+        self.zones = from_spec([z for z in zone_items if z.get("type") in ("protect", "keep", "design")]
+                               + [{**z, "type": "protect"} for z in wheel_items],
                                self.frame.scale, self.frame.R0, self.frame.center)
         self.apply_features()
         body = self.frame.body
         lo, hi = body.bbox()
         self.L_body = float(hi[0] - lo[0])
+        self.ground = None
+        g = spec.get("ground") or {}
+        if g.get("enabled") and spec.get("tunnel", "general") != "supersonic":
+            if any(abs(a) > 1e-9 for a in self.aoas) or abs(self.yaw) > 1e-9:
+                self.log("on the rolling road the body sits level: angle of attack and yaw are fixed at 0")
+            self.aoas, self.yaw = [0.0], 0.0
+            from ..geometry.wheels import wheel_rims
+            wheels = wheel_rims(from_spec(wheel_items, self.frame.scale, self.frame.R0, self.frame.center))
+            self.ground = {"z": float(lo[2]) - max(float(g.get("clearance", 0.0) or 0.0), 0.0), "wheels": wheels}
+            self.log(f"rolling road under the body, {len(wheels)} spinning wheel(s)")
         self.ref_area = float(env.get("ref_area") or projected_area(body, 0))
         self.planform_area = projected_area(body, 2)
         self.ref_length = float(env.get("ref_length") or self.L_body)
@@ -350,6 +365,12 @@ class Runner:
         run = self.last_runs[(abs(aoa) if mirror else aoa, self.last_re[i_speed])]
         return mirror_run(run) if mirror else run
 
+    def re_flight_for(self, re_sim, re_by_speed):
+        """The flight Reynolds number a tunnel run stands for: the geometric mean over the speeds
+        that share it (the wall model's log law depends on it only logarithmically)."""
+        fl = [v * self.L_body / self.air["nu"] for v, r in zip(self.speeds, re_by_speed) if r == re_sim]
+        return float(np.exp(np.mean(np.log(fl)))) if fl else None
+
     def re_for(self, ev):
         """Reynolds-number groups for an evaluator: the chosen level's, or a finer grid's own higher
         cap (the optimizer's confirmation one level up)."""
@@ -378,6 +399,7 @@ class Runner:
                                    live_run(self, label, a, None, f, cd, trace))
                 try:
                     runs[(a, re)] = ev.run(wind, re, key=(a, re), want_fields=(re == re_groups[0]) and self.fields_wanted,
+                                           re_flight=self.re_flight_for(re, re_by_speed),
                                            progress=prog, groups=groups)
                 except InterruptedError:
                     raise JobCancelled()
@@ -427,10 +449,18 @@ class Runner:
             run["transonic"] = anchor
 
     def save_fields(self, tag, fields, angles):
+        """Visual products per simulated angle: JSON for the browser, and beside it (npz) the
+        coarse 3D field and the surface pressure per face for the VTK export."""
         out = []
         for k, a in enumerate(angles):
             name = f"fields_{tag}_{k}.json"
-            self.write_json(name, fields[a])
+            fj = dict(fields[a] or {})
+            vol = fj.pop("_volume", None)
+            cpf = fj.pop("_cp_face", None)
+            self.write_json(name, fj)
+            if vol is not None:
+                np.savez_compressed(self.out / f"volume_{tag}_{k}.npz", cp_face=cpf if cpf is not None else np.zeros(0),
+                                    **{key: np.asarray(val) for key, val in vol.items()})
             out.append({"aoa": a, "file": name})
         return out
 
@@ -462,7 +492,8 @@ class Runner:
     def run_analyze(self):
         body = self.frame.body
         self.sim_angles = self.simulated_angles(body)
-        self.total_runs = self.runs_per_design()
+        grid_study = bool(self.spec.get("grid_study"))
+        self.total_runs = self.runs_per_design() + (2 * len(self.re_groups) if grid_study else 0)
         lo, hi, self.frontal_plan = self.envelope_box([body])
         self._progress(0.01, "Building virtual wind tunnel")
         ev = self.make_evaluator(lo, hi, self.fid)
@@ -472,11 +503,45 @@ class Runner:
         result = {"kind": "analyze", **self.common(ev),
                   "baseline": {"polar": polar, "summary": polar_summary(polar)},
                   "fields": {"baseline": self.field_index(saved)},
-                  "meshes": {"baseline": "baseline_body.stl"},
-                  "cfd_runs": self.cfd_runs, "elapsed_s": time.time() - self.t0}
+                  "meshes": {"baseline": "baseline_body.stl"}}
+        if grid_study:
+            result["grid_study"] = self.grid_study(body, lo, hi, ev, polar)
+        result.update({"cfd_runs": self.cfd_runs, "elapsed_s": time.time() - self.t0})
         self.write_json("result.json", result)
         self._progress(1.0, "Done")
         return result
+
+    def grid_study(self, body, lo, hi, ev_fine, polar_fine):
+        """The design again on two coarser grids (cells / 2.2 and / 4.84, refinement ratio 1.3) at the
+        angle nearest zero; Richardson extrapolation and the GCI of drag (and lift, when there is
+        lift to speak of) on the chosen grid. The coarse runs bill at the exploration rate."""
+        import dataclasses
+        from ..cfd.gridcheck import CELLS_STEP, gci
+        from ..plans import EXPLORE_FID
+        a0 = min(self.aoas, key=abs)
+        sim = [abs(a0) if self.symmetric else a0]
+        k0 = [q["aoa"] for q in polar_fine].index(a0)
+        rows = [(ev_fine.domain.dx, polar_fine[k0])]
+        for k, factor in enumerate((CELLS_STEP, CELLS_STEP ** 2), 1):
+            fid = dataclasses.replace(self.fid, cells=int(self.fid.cells / factor))
+            ev = self.make_evaluator(lo, hi, fid)
+            ev.bill_as = EXPLORE_FID.get(self.fid.name, "coarse")
+            self.fields_wanted = False
+            pol, _ = self.evaluate_design(ev, body, f"Grid check {k}/2", sim, aoas=[a0])
+            rows.append((ev.domain.dx, pol[0]))
+        self.fields_wanted = True
+        (h1, p1), (h2, p2), (h3, p3) = rows
+        out = {"aoa": a0, "speed": self.speeds[0], "cells": [int(self.fid.cells / CELLS_STEP ** i) for i in range(3)],
+               "dx_m": [h1, h2, h3]}
+        cd = [q["speeds"][0]["cd"] for q in (p1, p2, p3)]
+        out["cd"] = gci(*cd, h1, h2, h3)
+        cl = [q["cl"] for q in (p1, p2, p3)]
+        if max(abs(c) for c in cl) > 0.05:
+            out["cl"] = gci(*cl, h1, h2, h3)
+        g = out["cd"]
+        self.log(f"grid check: Cd {cd[2]:.4f} / {cd[1]:.4f} / {cd[0]:.4f} (coarse to fine), "
+                 f"extrapolated {g['extrapolated']:.4f}, GCI {g['gci_fine']:.1%}")
+        return out
 
     def envelope_box(self, bodies, deformer=None):
         """Grid box covering every shape at every simulated angle (+3 % margin) and the

@@ -66,9 +66,11 @@ class FixedLift:
 
     RES = {False: {"ns": 24, "nc": 4, "nf": "large"}, True: {"ns": 64, "nc": 8, "nf": "xlarge"}}
 
-    def __init__(self, r, space, mass_kg=None, keep_stability=True, tol=0.05):
+    def __init__(self, r, space, mass_kg=None, keep_stability=True, tol=0.05, structure=None):
+        from ..aero.structure import StructureSettings
         self.r = r
         self.space = space
+        self.struct = StructureSettings.from_spec(structure)
         b0 = space.base.wing
         self.ref = b0.ref
         self.keep_stability = keep_stability
@@ -84,6 +86,7 @@ class FixedLift:
             a_mid = float(np.median(r.aoas))
             self.lift = [wm0.evaluate(v, r.air["rho"], r.air["mu"], alpha=a_mid)["lift_N"] for v in r.speeds]
             self.basis = f"the original design's lift at {a_mid:g}°"
+        self.weight = float(max(self.lift))           # the spar carries load factor x this
 
     def model(self, cand, fine=False):
         key = "_wm_fine" if fine else "_wm"
@@ -110,10 +113,12 @@ class FixedLift:
             v = VLM(surfs, self.ref["ref_area"], self.ref["ref_length"], self.ref["x_ref"])
             rho, mu = self.r.air["rho"], self.r.air["mu"]
             rows = []
+            cl_first = None
             for V, L in zip(self.r.speeds, self.lift):
                 cl_req = L / (0.5 * rho * V * V * self.ref["ref_area"])
                 a = v.alpha_for_cl(cl_req)
                 cl = v.solve(a, V, rho)["cl_strip"]
+                cl_first = cl if cl_first is None else cl_first
                 stall = False
                 for si, s in enumerate(surfs):
                     idx = np.flatnonzero(v.strip_owner == si)
@@ -124,7 +129,18 @@ class FixedLift:
                     stall = stall or peak > STALL_MARGIN * clmax
                 rows.append({"v": V, "alpha": a, "CL": cl_req, "stall": stall})
             cand._quick = (v.neutral_point(), rows)
+            cand._quick_lattice = (v, surfs, cl_first)
         return cand._quick
+
+    def structure(self, cand):
+        """Spar sized for load factor x safety factor x the weight, wing mass, tip deflection (see
+        aero/structure.py), from the quick lattice's span loading at the first envelope speed."""
+        if getattr(cand, "_structure", None) is None:
+            from ..aero.structure import wing_structure
+            self.quick(cand)
+            v, surfs, cl = cand._quick_lattice
+            cand._structure = wing_structure(v, surfs, self.weight, self.struct, cl)
+        return cand._structure
 
     def check(self, cand):
         if cand.wing is None or not cand.wing.surfaces:
@@ -142,6 +158,9 @@ class FixedLift:
                 self.np0 = self.quick(self.space.base)[0]
             if abs(npx - self.np0) > self.tol * self.mac0:
                 return f"neutral point moves {(npx - self.np0) * 1000:+.0f} mm (stability kept within {self.tol:.0%} MAC)"
+        st = self.structure(cand)
+        if not st["ok"]:
+            return st["why"]
         return None
 
     def component(self, cand, fine=False):
@@ -225,7 +244,7 @@ def optimize(r):
     fid_x = FIDELITY[EXPLORE_FID.get(fid_full.name, "coarse")]
     if r.__class__.__name__ == "RCRunner" and getattr(r, "u_cap", None) and fid_x.u_lat > r.u_cap:
         fid_x = dataclasses.replace(fid_x, u_lat=r.u_cap)
-    lift = FixedLift(r, space, o.get("mass_kg"), bool(o.get("keep_stability", True))) if winged else None
+    lift = FixedLift(r, space, o.get("mass_kg"), bool(o.get("keep_stability", True)), structure=o.get("structure")) if winged else None
     wing_only = winged          # winged designs never need the CFD in the loop (see the module notes)
 
     # grid sized once for every shape the bounds allow (extremes along each parameter); only their
@@ -327,7 +346,11 @@ def optimize(r):
             rows = lift.component(cand)
             base = base_x.setdefault("rows", rows)
             J = _ratio(rows, base)
-            return {"J": J, "drag_ratio": J, "fixed_lift": _short(rows), "candidate": cand}
+            # the other objectives each design is also scored on (the trade-off chart in the results)
+            return {"J": J, "drag_ratio": J, "fixed_lift": _short(rows), "candidate": cand,
+                    "wing_mass_kg": round(lift.structure(cand)["mass_kg"], 4),
+                    "stall_margin": round(min(x["cl_margin"] for x in rows), 4),
+                    "power_W": round(float(np.mean([x["power_W"] for x in rows])), 3)}
         r.fields_wanted = False
         polar, _ = r.evaluate_design(ev_x, cand.mesh, label, sim_x, aoas=angles_x, groups=None)
         base = base_x.setdefault("polar", polar)
@@ -501,6 +524,20 @@ def optimize(r):
                                 "baseline": lift.component(base_c, fine=True), "best": lift.component(best_c, fine=True),
                                 "body_from": "Hoerner" if lift.has_body else None,
                                 "neutral_point_shift_mm": (lift.quick(best_c)[0] - lift.quick(base_c)[0]) * 1000}
+        result["structure"] = {"base": lift.structure(base_c), "best": lift.structure(best_c),
+                               "settings": dataclasses.asdict(lift.struct)}
+        if tmpl:
+            # mission performance of both designs at their flight weight (default battery and
+            # propulsion; the results page recomputes it with the user's numbers)
+            from ..aero.mission import MissionInputs, mission
+            from ..geometry.templates import build as build_template
+            try:
+                mass = lift.weight / 9.80665
+                result["mission"] = {
+                    "base": mission(build_template(tmpl["id"], base_c.values), mass, r.air, MissionInputs(), v_max=1.3 * max(r.speeds)),
+                    "best": mission(build_template(tmpl["id"], best_c.values), mass, r.air, MissionInputs(), v_max=1.3 * max(r.speeds))}
+            except Exception as e:  # noqa: BLE001 - a performance estimate must not fail the job
+                r.log(f"mission estimate skipped ({type(e).__name__})")
     (r.out / "baseline_body.stl").write_bytes(base_c.mesh.to_stl_bytes())
     (r.out / "best_body.stl").write_bytes(best_c.mesh.to_stl_bytes())
     lead = search.promising

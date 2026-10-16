@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import urllib.parse
 import re
 import secrets
 import logging
@@ -197,6 +198,8 @@ async def signup(request: Request):
         uid = cur.lastrowid
         _apply_owner(con, uid, email)
         audit(con, uid, "signup", email)
+        from .teams import accept_invites
+        accept_invites(con, uid, email)
         start_session(con, request, uid, resp)
     return resp
 
@@ -238,6 +241,8 @@ async def login(request: Request):
     resp = JSONResponse({"ok": True})
     with db() as con:
         _apply_owner(con, user["id"], email)
+        from .teams import accept_invites
+        accept_invites(con, user["id"], email)
         start_session(con, request, user["id"], resp)
         audit(con, user["id"], "login", _client_ip(request))
     return resp
@@ -484,7 +489,7 @@ async def feature_suggest(request: Request):
     from .geometry import features as FT
     with db() as con:
         user = current_user(request, con)
-        project = _get_project(con, user, request.path_params["pid"])
+        project = _get_project(con, user, request.path_params["pid"], need="write")
     data = await body_json(request, limit=200_000)
     if data.get("type") not in FT.FEATURES:
         err(400, "Unknown shape feature.")
@@ -510,7 +515,7 @@ async def feature_propose(request: Request):
     from .geometry import features as FT
     with db() as con:
         user = current_user(request, con)
-        project = _get_project(con, user, request.path_params["pid"])
+        project = _get_project(con, user, request.path_params["pid"], need="write")
     data = await body_json(request, limit=500_000)
     st = _migrate(json.loads(project["settings"] or "{}"))
     existing = [f for f in _clean_features(data.get("features", st.get("features") or [])) if f.get("enabled", True)]
@@ -532,7 +537,7 @@ async def feature_ai(request: Request):
     from .geometry import features as FT
     with db() as con:
         user = current_user(request, con)
-        project = _get_project(con, user, request.path_params["pid"])
+        project = _get_project(con, user, request.path_params["pid"], need="write")
         last = con.execute("""SELECT summary FROM jobs WHERE project_id=? AND status='done' AND summary IS NOT NULL
                               ORDER BY finished_at DESC LIMIT 1""", (project["id"],)).fetchone()
     if not ai.available():
@@ -578,7 +583,7 @@ async def feature_build(request: Request):
     from .geometry import checks
     with db() as con:
         user = current_user(request, con)
-        project = _get_project(con, user, request.path_params["pid"])
+        project = _get_project(con, user, request.path_params["pid"], need="write")
     data = await body_json(request, limit=500_000)
     st = _migrate(json.loads(project["settings"] or "{}"))
     feats = [f for f in _clean_features(data.get("features") or []) if f.get("enabled", True)]
@@ -666,8 +671,19 @@ async def health(request: Request):
 
 
 # ---- projects -------------------------------------------------------------------------------
-def _project_out(p, con=None):
+def _project_out(p, con=None, user=None):
     out = {k: p[k] for k in ("id", "name", "created_at", "updated_at", "filename", "source_format", "file_size")}
+    out["team"] = None
+    out["mine"] = user is None or p["user_id"] == user["id"]
+    if con is not None and p["team_id"] is not None:
+        from . import teams
+        t = con.execute("SELECT id, name FROM teams WHERE id=?", (p["team_id"],)).fetchone()
+        if t:
+            out["team"] = {"id": t["id"], "name": t["name"],
+                           "role": "owner" if out["mine"] else teams.role_of(con, t["id"], user["id"]) if user else None}
+        if not out["mine"]:
+            o = con.execute("SELECT name, email FROM users WHERE id=?", (p["user_id"],)).fetchone()
+            out["owner"] = (o["name"] or o["email"]) if o else None
     out["settings"] = _migrate(json.loads(p["settings"] or "{}"))
     out["metrics"] = json.loads(p["metrics"] or "{}")
     out["has_thumbnail"] = (project_dir(p["id"]) / "thumb.png").exists()
@@ -680,11 +696,21 @@ def _project_out(p, con=None):
     return out
 
 
-def _get_project(con, user, pid):
-    p = con.execute("SELECT * FROM projects WHERE id=? AND user_id=?", (pid, user["id"])).fetchone()
-    if not p:
-        err(404, "Project not found.")
-    return p
+def _get_project(con, user, pid, need="read"):
+    """The project if this user may `need` it: read (viewers up), write (editors up) or owner (its
+    creator, or a team owner/admin). Anything else is a 404, so ids of other teams leak nothing."""
+    from . import teams
+    p = con.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    if p and p["user_id"] == user["id"]:
+        return p
+    if p and p["team_id"] is not None:
+        role = teams.role_of(con, p["team_id"], user["id"])
+        want = {"read": "viewer", "write": "editor", "owner": "admin"}[need]
+        if teams.can(role, want):
+            return p
+        if teams.can(role, "viewer"):
+            err(403, f"Your role in this team ({role}) cannot {'change' if need == 'write' else 'delete'} this project.")
+    err(404, "Project not found.")
 
 
 def _inspect_model(data: bytes, filename: str):
@@ -707,8 +733,10 @@ async def projects(request: Request):
     with db() as con:
         user = current_user(request, con)
         if request.method == "GET":
-            rows = con.execute("SELECT * FROM projects WHERE user_id=? ORDER BY updated_at DESC", (user["id"],)).fetchall()
-            return JSONResponse([_project_out(r, con) for r in rows])
+            rows = con.execute("""SELECT * FROM projects WHERE user_id=? OR team_id IN
+                                  (SELECT team_id FROM team_members WHERE user_id=?) ORDER BY updated_at DESC""",
+                               (user["id"], user["id"])).fetchall()
+            return JSONResponse([_project_out(r, con, user) for r in rows])
         plan = plan_for(user)
         n = con.execute("SELECT COUNT(*) AS n FROM projects WHERE user_id=?", (user["id"],)).fetchone()["n"]
     if plan["max_projects"] is not None and n >= plan["max_projects"]:
@@ -719,6 +747,7 @@ async def projects(request: Request):
     ctype = request.headers.get("content-type", "")
     source_format = None
     tmpl_built = None
+    cad_source = None
     if ctype.startswith("application/json"):
         data = await body_json(request)
     if ctype.startswith("application/json") and data.get("template"):
@@ -761,8 +790,10 @@ async def projects(request: Request):
         name = (request.query_params.get("name") or filename.rsplit(".", 1)[0])[:120]
         source_format = (request.query_params.get("source") or filename.rsplit(".", 1)[-1]).lower()[:10]
         ext = filename.lower().rsplit(".", 1)[-1]
-        if ext not in ("stl", "obj"):
-            err(400, "Upload STL or OBJ (STEP, IGES, 3MF, PLY and glTF are converted in your browser).")
+        from .geometry import cad
+        cad_ok = ext in cad.CAD_EXTENSIONS and cad.available()
+        if ext not in ("stl", "obj") and not cad_ok:
+            err(400, "Upload STL, OBJ, STEP or IGES (3MF, PLY and glTF are converted in your browser).")
         limit = plan["max_upload_mb"] * 1024 * 1024
         chunks, size = [], 0
         async for chunk in request.stream():
@@ -771,6 +802,15 @@ async def projects(request: Request):
                 err(413, f"File is larger than the {plan['max_upload_mb']} MB limit of the {plan['name']} plan.", upgrade=True)
             chunks.append(chunk)
         raw = b"".join(chunks)
+        if cad_ok:
+            # CAD: tessellate once on the server (OpenCASCADE via gmsh), keep the original beside it
+            cad_source = (ext, raw)
+            try:
+                raw = (await run_in_threadpool(cad.cad_to_mesh, raw, filename)).to_stl_bytes()
+            except ValueError as e:
+                err(400, f"Could not read the CAD file: {e}")
+            filename = filename.rsplit(".", 1)[0] + ".stl"
+            source_format = ext
         preset = None
         tunnel = request.query_params.get("tunnel")
         if tunnel in TUNNELS:
@@ -787,6 +827,8 @@ async def projects(request: Request):
     pdir.mkdir(parents=True, exist_ok=True)
     ext = filename.lower().rsplit(".", 1)[-1]
     (pdir / f"model.{ext}").write_bytes(raw)
+    if cad_source is not None:
+        (pdir / f"source.{cad_source[0]}").write_bytes(cad_source[1])
     st = {"units": units, "forward": forward, "up": up, "envelope": dict(DEFAULT_ENVELOPE), "zones": []}
     if preset:
         st.update(preset)
@@ -812,7 +854,7 @@ async def project_solidify(request: Request):
     from .optimize.runner import load_model
     with db() as con:
         user = current_user(request, con)
-        project = _get_project(con, user, request.path_params["pid"])
+        project = _get_project(con, user, request.path_params["pid"], need="write")
         plan = plan_for(user)
         n = con.execute("SELECT COUNT(*) AS n FROM projects WHERE user_id=?", (user["id"],)).fetchone()["n"]
     if plan["max_projects"] is not None and n >= plan["max_projects"]:
@@ -860,7 +902,7 @@ DEFAULT_ENVELOPE = {"speed_min": 15.0, "speed_max": 40.0, "speed_count": 4, "aoa
                     "aoa_count": 3, "altitude": 0.0, "yaw": 0.0, "ref_area": None, "ref_length": None}
 ENVELOPE_LIMITS = {"speed_min": (0.5, 450.0), "speed_max": (0.5, 450.0), "aoa_min": (-30.0, 30.0),
                    "aoa_max": (-30.0, 30.0), "altitude": (-500.0, 20000.0), "yaw": (-30.0, 30.0)}
-ZONE_TYPES = ("protect", "keep", "design", "material")
+ZONE_TYPES = ("protect", "keep", "design", "material", "wheel")
 TUNNELS = ("general", "rc", "supersonic")
 DEFAULT_HYPER = {"mach_min": 1.5, "mach_max": 4.0, "mach_count": 4, "aoa_min": 0.0, "aoa_max": 6.0, "aoa_count": 3,
                  "altitude": 15000.0, "yaw": 0.0, "ref_area": None, "ref_length": None}
@@ -1073,6 +1115,12 @@ def _clean_settings(data, old):
             st[k] = data[k]
     if st.get("forward", "-x")[1] == st.get("up", "+z")[1]:
         err(400, "Forward and up must be different axes.")
+    if isinstance(data.get("ground"), dict):
+        g = data["ground"]
+        clearance = _num(g.get("clearance", 0.0) or 0.0, "ground clearance")
+        if not (0.0 <= clearance <= 5.0):
+            err(400, "Ground clearance must be between 0 and 5 m.")
+        st["ground"] = {"enabled": bool(g.get("enabled")), "clearance": clearance}
     if isinstance(data.get("envelope"), dict):
         env = dict(st["envelope"])
         for k, (lo, hi) in ENVELOPE_LIMITS.items():
@@ -1160,9 +1208,9 @@ async def project_item(request: Request):
     pid = request.path_params["pid"]
     with db() as con:
         user = current_user(request, con)
-        p = _get_project(con, user, pid)
+        p = _get_project(con, user, pid, {"GET": "read", "DELETE": "owner"}.get(request.method, "write"))
         if request.method == "GET":
-            return JSONResponse(_project_out(p, con))
+            return JSONResponse(_project_out(p, con, user))
         if request.method == "DELETE":
             jids = [r["id"] for r in con.execute("SELECT id FROM jobs WHERE project_id=?", (pid,))]
             con.execute("UPDATE jobs SET cancel_requested=1 WHERE project_id=? AND status IN ('queued','running')", (pid,))
@@ -1235,7 +1283,7 @@ def _build_spec(data, project, plan):
     except KeyError:
         err(400, "Unknown fidelity.")
     st = _clean_settings({k: data[k] for k in ("units", "unit_scale", "forward", "up", "envelope", "zones", "tunnel", "propellers",
-                                                "hyper", "features") if k in data}, st)
+                                                "hyper", "features", "ground") if k in data}, st)
     st = _migrate(st)
     tunnel = st.get("tunnel", "general")
     if tunnel == "supersonic":
@@ -1247,6 +1295,11 @@ def _build_spec(data, project, plan):
             "envelope": {"speeds": speeds, "aoas": aoas, "altitude": env["altitude"], "yaw": env["yaw"],
                          "ref_area": env["ref_area"], "ref_length": env["ref_length"]},
             "zones": [z for z in st.get("zones", []) if z["type"] != "material"]}
+    if kind == "analyze" and data.get("grid_study"):
+        spec["grid_study"] = True
+    if (st.get("ground") or {}).get("enabled") and not (st.get("template") or {}).get("id") in ("uav", "wing"):
+        spec["ground"] = dict(st["ground"])
+        spec["envelope"]["aoas"], spec["envelope"]["yaw"] = [0.0], 0.0      # level on the road
     if tunnel == "rc" and st.get("propellers"):
         spec["propellers"] = st["propellers"]
         if min(speeds) < 2.0:
@@ -1333,6 +1386,10 @@ def _search_options(o, tm, plan, free_features=False):
         err(400, "Optimize between 1 and 8 parameters.")
     out["hold_wing_area"] = bool(o.get("hold_wing_area", False))
     out["keep_stability"] = bool(o.get("keep_stability", True))
+    if isinstance(o.get("structure"), dict):
+        from .aero.structure import StructureSettings
+        import dataclasses as _dc
+        out["structure"] = _dc.asdict(StructureSettings.from_spec(o["structure"]))
     if tm:
         out["params"] = tm.get("params") or {}
         free = [p for p in T.get(tm["id"])["params"]
@@ -1413,7 +1470,7 @@ async def project_jobs(request: Request):
     pid = request.path_params["pid"]
     with db() as con:
         user = current_user(request, con)
-        p = _get_project(con, user, pid)
+        p = _get_project(con, user, pid, "read" if request.method == "GET" else "write")
         if request.method == "GET":
             rows = con.execute("SELECT * FROM jobs WHERE project_id=? ORDER BY created_at DESC LIMIT 50", (pid,)).fetchall()
             return JSONResponse([_job_out(con, r, full=False) for r in rows])
@@ -1437,15 +1494,23 @@ async def project_jobs(request: Request):
                 credits_needed=est, credits_left=max(left, 0))
         con.execute("UPDATE projects SET settings=? WHERE id=?", (json.dumps(st), pid))
         jid = enqueue(con, user, p, spec, plan, est)
+        if p["team_id"] is not None:
+            audit(con, user["id"], f"job_{spec.get('kind')}", f"{p['name']} ({jid})", team_id=p["team_id"])
         j = con.execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
         return JSONResponse(_job_out(con, j), status_code=201)
 
 
-def _get_job(con, user, jid):
-    j = con.execute("SELECT * FROM jobs WHERE id=? AND user_id=?", (jid, user["id"])).fetchone()
-    if not j:
-        err(404, "Job not found.")
-    return j
+def _get_job(con, user, jid, need="read"):
+    j = con.execute("SELECT * FROM jobs WHERE id=?", (jid,)).fetchone()
+    if j and j["user_id"] == user["id"]:
+        return j
+    if j:
+        p = con.execute("SELECT team_id FROM projects WHERE id=?", (j["project_id"],)).fetchone()
+        if p and p["team_id"] is not None:
+            from . import teams
+            if teams.can(teams.role_of(con, p["team_id"], user["id"]), "viewer" if need == "read" else "editor"):
+                return j
+    err(404, "Job not found.")
 
 
 async def job_item(request: Request):
@@ -1458,7 +1523,7 @@ async def job_item(request: Request):
 async def job_cancel(request: Request):
     with db() as con:
         user = current_user(request, con)
-        j = _get_job(con, user, request.path_params["jid"])
+        j = _get_job(con, user, request.path_params["jid"], "write")
         if j["status"] == "queued":
             con.execute("UPDATE jobs SET status='canceled', stage='Cancelled', finished_at=?, cancel_requested=1 WHERE id=?",
                         (time.time(), j["id"]))
@@ -1468,7 +1533,13 @@ async def job_cancel(request: Request):
 
 
 async def job_promote(request: Request):
-    """Start a new project from an optimization's best design (in the original file frame)."""
+    """Start a new project from an optimization's best design (in the original file frame), or,
+    for a template, from any design it evaluated ({"index": history entry}, the trade-off chart)."""
+    try:
+        data = await body_json(request)
+    except Exception:  # noqa: BLE001 - an empty body means: the best design
+        data = {}
+    pick = data.get("index") if isinstance(data, dict) else None
     with db() as con:
         user = current_user(request, con)
         j = _get_job(con, user, request.path_params["jid"])
@@ -1488,7 +1559,13 @@ async def job_promote(request: Request):
     if st.get("template") and res_f.exists():
         res = json.loads(res_f.read_text())
         if res.get("template"):
-            st["template"] = {**st["template"], "values": T.clean(st["template"]["id"], res["template"]["best_values"])}
+            values = res["template"]["best_values"]
+            if pick is not None:
+                hist = res.get("history") or []
+                if not isinstance(pick, int) or not (0 <= pick < len(hist)) or not hist[pick].get("values"):
+                    err(400, "No such design in this optimization.")
+                values = {**st["template"]["values"], **hist[pick]["values"]}
+            st["template"] = {**st["template"], "values": T.clean(st["template"]["id"], values)}
             tmpl_built, raw = await run_in_threadpool(_template_files, st["template"]["id"], st["template"]["values"])
             st = _migrate(st)
             _apply_template_ref(st, tmpl_built)
@@ -1537,6 +1614,376 @@ async def job_file(request: Request):
         base = "".join(c for c in (project["name"] if project else "design") if c.isalnum() or c in "-_ ").strip() or "design"
         dl = f"{base} - {'optimized' if name == 'optimized.stl' else 'most promising (unconfirmed)'}.stl"
     return FileResponse(f, media_type="model/stl", filename=dl)
+
+
+def _safe_name(name, fallback="design"):
+    return "".join(c for c in (name or fallback) if c.isalnum() or c in "-_ ").strip() or fallback
+
+
+def _metres(spec_model):
+    from .geometry.mesh import UNIT_SCALE
+    units = (spec_model or {}).get("units", "m")
+    if units == "custom":
+        return float((spec_model or {}).get("scale") or 1.0)
+    return UNIT_SCALE.get(units, 1.0)
+
+
+def _step_for_job(j, out):
+    """The optimized design as STEP: a template as smooth solids through its own sections at the
+    optimized values; any other design as a faceted solid of its optimized mesh (in metres)."""
+    from .geometry import cad
+    from .geometry.mesh import load_mesh
+    spec = json.loads(j["spec"])
+    result = json.loads((job_dir(j["id"]) / "result.json").read_text())
+    tm = spec.get("template")
+    if tm and result.get("kind") == "optimize":
+        best = (result.get("template") or {}).get("best_values") or result.get("best_values") or {}
+        cad.template_to_step(tm["id"], {**tm["values"], **best}, out)
+        return out
+    if tm:
+        cad.template_to_step(tm["id"], tm["values"], out)
+        return out
+    src = job_dir(j["id"]) / ("optimized.stl" if result.get("kind") == "optimize" else "baseline_body.stl")
+    if not src.exists():
+        raise ValueError("this job has no design to export")
+    mesh = load_mesh(src.read_bytes(), src.name)
+    if src.name == "optimized.stl":
+        mesh = mesh.transformed(s=_metres(spec.get("model")))
+    cad.mesh_to_step(mesh, out)
+    return out
+
+
+def _template_params(spec, result):
+    """(name, value, unit, comment) of every numeric template dimension at the job's design."""
+    tm = spec.get("template")
+    if not tm:
+        return []
+    vals = {**tm["values"], **((result.get("template") or {}).get("best_values") or {})}
+    out = []
+    for p in T.get(tm["id"])["params"]:
+        v = vals.get(p.key)
+        if p.unit == "choice" or not isinstance(v, (int, float)):
+            continue
+        out.append((p.key, float(v), p.unit, p.label))
+    return out
+
+
+async def fusion_status(request: Request):
+    from . import fusion
+    with db() as con:
+        user = current_user(request, con)
+    if not settings.fusion_bridge or not user["is_admin"]:
+        return JSONResponse({"enabled": False})
+    return JSONResponse({"enabled": True, **await run_in_threadpool(fusion.status)})
+
+
+async def job_fusion(request: Request):
+    """Send the job's design to the Fusion running on this machine (owner only, local only)."""
+    from . import fusion
+    data = await body_json(request)
+    with db() as con:
+        user = current_user(request, con)
+        j = _get_job(con, user, request.path_params["jid"])
+    if not settings.fusion_bridge or not user["is_admin"]:
+        err(403, "Send to Fusion works only where AeroSculpt runs on the same computer as Fusion.")
+    if j["status"] != "done":
+        err(409, "The job has not finished.")
+    spec = json.loads(j["spec"])
+    result = json.loads((job_dir(j["id"]) / "result.json").read_text())
+    action = data.get("action")
+    try:
+        if action == "parameters":
+            params = _template_params(spec, result)
+            if not params:
+                err(400, "Only template designs have named dimensions to send; use Import instead.")
+            res = await run_in_threadpool(fusion.push_parameters, params)
+        elif action == "import":
+            from .geometry import cad
+            out = job_dir(j["id"]) / "design.step"
+            if not out.exists():
+                if not cad.available():
+                    err(501, "STEP export needs gmsh on the server.")
+                await run_in_threadpool(_step_for_job, j, out)
+            res = await run_in_threadpool(fusion.import_step, out)
+        else:
+            err(400, "action must be parameters or import.")
+    except fusion.FusionError as e:
+        err(502, str(e))
+    except ValueError as e:
+        err(413, str(e))
+    with db() as con:
+        audit(con, user["id"], "fusion_" + action, j["id"])
+    return JSONResponse(res)
+
+
+async def project_estimate(request: Request):
+    """How long a job would take, from the grids it will actually use (no job is created)."""
+    from .estimate import estimate
+    data = await body_json(request)
+    with db() as con:
+        user = current_user(request, con)
+        project = _get_project(con, user, request.path_params["pid"])
+        plan = plan_for(user)
+    spec = _build_spec(data, project, plan)
+    st = _clean_settings({k: data[k] for k in ("units", "unit_scale", "forward", "up") if k in data},
+                         json.loads(project["settings"] or "{}"))
+    out = await run_in_threadpool(estimate, spec, json.loads(project["metrics"] or "{}"), st)
+    return JSONResponse(out)
+
+
+async def job_mission(request: Request):
+    """Mission performance (endurance, range, climb, best speeds) of a winged template job's
+    original and optimized designs, with the user's battery and propulsion numbers."""
+    from .aero.mission import MissionInputs, mission
+    from .cfd.analysis import isa
+    data = await body_json(request)
+    with db() as con:
+        user = current_user(request, con)
+        j = _get_job(con, user, request.path_params["jid"])
+    if j["status"] != "done":
+        err(409, "The job has not finished.")
+    spec = json.loads(j["spec"])
+    tm = spec.get("template")
+    if not tm or tm["id"] not in ("uav", "wing"):
+        err(400, "Mission performance needs a winged template design (fixed-wing UAV or wing).")
+    result = json.loads((job_dir(j["id"]) / "result.json").read_text())
+    try:
+        mass = float(data.get("mass_kg") or spec.get("optimize", {}).get("mass_kg") or 0)
+    except (TypeError, ValueError):
+        err(400, "Invalid mass.")
+    if not (0.01 <= mass <= 1e5):
+        err(400, "Give the flight mass (kg).")
+    inputs = MissionInputs.from_spec(data)
+    env = spec.get("envelope", {})
+    air = isa(float(env.get("altitude", 0.0)))
+    vmax = 1.3 * max(env.get("speeds") or [20.0])
+    best_vals = {**tm["values"], **((result.get("template") or {}).get("best_values") or {})}
+
+    def run():
+        out = {"base": mission(T.build(tm["id"], tm["values"]), mass, air, inputs, v_max=vmax)}
+        if result.get("kind") == "optimize":
+            out["best"] = mission(T.build(tm["id"], best_vals), mass, air, inputs, v_max=vmax)
+        return out
+    return JSONResponse(await run_in_threadpool(run))
+
+
+async def job_export(request: Request):
+    """Design and report exports of a finished job: step (CAD), pdf (report), vtk (flow fields)."""
+    fmt = request.path_params["fmt"]
+    with db() as con:
+        user = current_user(request, con)
+        j = _get_job(con, user, request.path_params["jid"])
+        plan = plan_for(user)
+        project = con.execute("SELECT name FROM projects WHERE id=?", (j["project_id"],)).fetchone()
+    if j["status"] != "done":
+        err(409, "The job has not finished.")
+    base = _safe_name(project["name"] if project else None)
+    jd = job_dir(j["id"])
+    if fmt == "step":
+        from .geometry import cad
+        if not plan["export"]:
+            err(403, "Exporting geometry is available on Pro and Team.", upgrade=True)
+        if not cad.available():
+            err(501, "STEP export needs gmsh on the server.")
+        out = jd / "design.step"
+        if not out.exists():
+            try:
+                await run_in_threadpool(_step_for_job, j, out)
+            except ValueError as e:
+                err(413, str(e))
+        return FileResponse(out, media_type="model/step", filename=f"{base} - {'optimized' if j['kind'] == 'optimize' else 'design'}.step")
+    if fmt == "pdf":
+        from .report import build_pdf
+        out = jd / "report.pdf"
+        if not out.exists() or out.stat().st_mtime < (jd / "result.json").stat().st_mtime:
+            spec = json.loads(j["spec"])
+            result = json.loads((jd / "result.json").read_text())
+            await run_in_threadpool(build_pdf, jd, spec, result, project["name"] if project else "Design", out, j["id"])
+        return FileResponse(out, media_type="application/pdf", filename=f"{base} - report.pdf")
+    if fmt == "vtk":
+        from .cfd.volume import vtk_surface, vtk_volume, vtk_zip
+        from .geometry.mesh import load_mesh
+
+        def build():
+            result = json.loads((jd / "result.json").read_text())
+            entries = []
+            for tag, stl in (("baseline", "baseline_body.stl"), ("best", "best_body.stl")):
+                if not (jd / stl).exists():
+                    continue
+                mesh = load_mesh((jd / stl).read_bytes(), stl)
+                for e in ((result.get("fields") or {}).get(tag) or []):
+                    k = e["file"].rsplit("_", 1)[-1].split(".")[0]
+                    npz = jd / f"volume_{tag}_{k}.npz"
+                    if not npz.exists() or e.get("mirror"):
+                        continue
+                    z = np.load(npz)
+                    vol = {key: z[key] for key in ("origin", "u", "cp", "solid")}
+                    vol["spacing"] = float(z["spacing"])
+                    label = f"{'original' if tag == 'baseline' else 'optimized'}_aoa{e['aoa']:g}"
+                    entries.append((f"{label}_flow.vtk", vtk_volume(vol, f"AeroSculpt {label} mean flow")))
+                    from .optimize.runner import wind_rotation
+                    wind = mesh.transformed(R=wind_rotation(e["aoa"], float((result.get("envelope") or {}).get("yaw", 0.0))))
+                    entries.append((f"{label}_surface.vtk", vtk_surface(wind, z["cp_face"].astype(np.float32) if len(z["cp_face"]) else None)))
+            if not entries:
+                raise ValueError("this job has no saved flow field (run it again to export one)")
+            readme = ("AeroSculpt flow export (legacy VTK, open in ParaView: File > Open).\n"
+                      "*_flow.vtk: mean velocity / freestream (vector), pressure coefficient cp, Q-criterion and a\n"
+                      "solid mask on a uniform grid, wind axes (flow along +x, z up), metres.\n"
+                      "*_surface.vtk: the body in the same axes with cp per face.\n")
+            return vtk_zip([("README.txt", readme.encode())] + entries)
+        try:
+            data = await run_in_threadpool(build)
+        except ValueError as e:
+            err(404, str(e))
+        return Response(data, media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{base} - flow fields (VTK).zip"'})
+    if fmt == "fusion-script":
+        from . import fusion
+        params = _template_params(json.loads(j["spec"]), json.loads((jd / "result.json").read_text()))
+        if not params:
+            err(400, "Only template designs have named dimensions for Fusion.")
+        return Response(fusion.parameter_script(params), media_type="text/x-python",
+                        headers={"Content-Disposition": f'attachment; filename="{base} - Fusion parameters.py"'})
+    err(404, "Unknown export format.")
+
+
+# ---- teams ----------------------------------------------------------------------------------------
+async def teams_list(request: Request):
+    from . import teams
+    with db() as con:
+        user = current_user(request, con)
+        if request.method == "GET":
+            out = []
+            for t in teams.teams_of(con, user["id"]):
+                mem, inv = teams.members(con, t["id"])
+                out.append({**t, "members": mem, "invites": inv if teams.can(t["role"], "admin") else []})
+            return JSONResponse(out)
+        if plan_for(user)["key"] != "team" and not user["is_admin"]:
+            err(403, "Teams are part of the Team plan.", upgrade=True)
+    data = await body_json(request)
+    name = (data.get("name") or "").strip()[:80]
+    if not name:
+        err(400, "Give the team a name.")
+    with transaction() as con:
+        tid = teams.create(con, user["id"], name)
+        audit(con, user["id"], "team_created", name, team_id=tid)
+    return JSONResponse({"id": tid, "name": name}, status_code=201)
+
+
+async def team_members(request: Request):
+    """POST {email, role}: invite; PATCH {user_id, role}: change a role; DELETE {user_id}: remove."""
+    from . import teams
+    tid = int(request.path_params["tid"])
+    data = await body_json(request)
+    with transaction() as con:
+        user = current_user(request, con)
+        me_role = teams.role_of(con, tid, user["id"])
+        if not teams.can(me_role, "admin"):
+            err(403, "Only team owners and admins manage members.")
+        role = data.get("role", "editor")
+        if request.method in ("POST", "PATCH") and role not in teams.ROLES:
+            err(400, "Unknown role.")
+        if role == "owner" and me_role != "owner" and request.method != "DELETE":
+            err(403, "Only an owner can make someone an owner.")
+        if request.method == "POST":
+            email = normalize_email(data.get("email"))
+            if not valid_email(email):
+                err(400, "Enter a valid email address.")
+            how = teams.invite(con, tid, email, role, user["id"])
+            audit(con, user["id"], "team_invite", f"{email} as {role} ({how})", team_id=tid)
+            return JSONResponse({"ok": True, "status": how})
+        uid = int(data.get("user_id") or 0)
+        target = teams.role_of(con, tid, uid)
+        if target is None:
+            err(404, "Not a member.")
+        if target == "owner" and me_role != "owner":
+            err(403, "Only an owner can change another owner.")
+        owners = con.execute("SELECT COUNT(*) AS n FROM team_members WHERE team_id=? AND role='owner'", (tid,)).fetchone()["n"]
+        if target == "owner" and owners <= 1 and (request.method == "DELETE" or role != "owner"):
+            err(400, "A team needs at least one owner.")
+        if request.method == "PATCH":
+            con.execute("UPDATE team_members SET role=? WHERE team_id=? AND user_id=?", (role, tid, uid))
+            audit(con, user["id"], "team_role", f"user {uid}: {target} -> {role}", team_id=tid)
+        else:
+            con.execute("DELETE FROM team_members WHERE team_id=? AND user_id=?", (tid, uid))
+            audit(con, user["id"], "team_remove", f"user {uid} ({target})", team_id=tid)
+    return JSONResponse({"ok": True})
+
+
+async def team_audit(request: Request):
+    from . import teams
+    tid = int(request.path_params["tid"])
+    with db() as con:
+        user = current_user(request, con)
+        if not teams.can(teams.role_of(con, tid, user["id"]), "admin"):
+            err(403, "Only team owners and admins can read the audit trail.")
+        rows = con.execute("""SELECT a.action, a.detail, a.at, u.email FROM audit a LEFT JOIN users u ON u.id = a.user_id
+                              WHERE a.team_id=? ORDER BY a.at DESC LIMIT 500""", (tid,)).fetchall()
+    return JSONResponse([dict(r) for r in rows])
+
+
+async def project_share(request: Request):
+    """{team_id} shares the project with a team you belong to (editor or above); null stops sharing."""
+    from . import teams
+    data = await body_json(request)
+    with transaction() as con:
+        user = current_user(request, con)
+        p = _get_project(con, user, request.path_params["pid"], "owner")
+        tid = data.get("team_id")
+        if tid is not None:
+            tid = int(tid)
+            if not teams.can(teams.role_of(con, tid, user["id"]), "editor"):
+                err(403, "You can only share with a team you edit in.")
+        con.execute("UPDATE projects SET team_id=? WHERE id=?", (tid, p["id"]))
+        audit(con, user["id"], "project_shared" if tid else "project_unshared", p["name"], team_id=tid or p["team_id"])
+    return JSONResponse({"ok": True, "team_id": tid})
+
+
+async def sso_info(request: Request):
+    from . import sso
+    return JSONResponse({"enabled": sso.enabled(), "name": sso.config()["name"] if sso.enabled() else None})
+
+
+async def sso_start(request: Request):
+    from . import sso
+    if not sso.enabled():
+        err(404, "Single sign-on is not configured on this server.")
+    url = await run_in_threadpool(sso.start, settings.public_url + "/auth/sso/callback")
+    return RedirectResponse(url, status_code=302)
+
+
+async def sso_callback(request: Request):
+    from . import sso, teams
+    if not sso.enabled():
+        err(404, "Single sign-on is not configured on this server.")
+    q = request.query_params
+    if q.get("error"):
+        return RedirectResponse("/login?sso_error=" + urllib.parse.quote(q.get("error_description") or q["error"]), status_code=302)
+    try:
+        who = await run_in_threadpool(sso.finish, q.get("code", ""), q.get("state", ""), settings.public_url + "/auth/sso/callback")
+    except Exception as e:  # noqa: BLE001 - any verification failure ends here, with no account touched
+        msg = str(e) if isinstance(e, sso.SSOError) else "the sign-in could not be verified"
+        return RedirectResponse("/login?sso_error=" + urllib.parse.quote(msg), status_code=302)
+    resp = RedirectResponse("/app", status_code=302)
+    with transaction() as con:
+        user = con.execute("SELECT * FROM users WHERE sso_subject=?", (who["sub"],)).fetchone() or \
+            con.execute("SELECT * FROM users WHERE email=?", (who["email"],)).fetchone()
+        if user is None:
+            if settings.allowed_signup_emails and who["email"] not in settings.allowed_signup_emails \
+                    and not con.execute("SELECT 1 FROM team_invites WHERE email=?", (who["email"],)).fetchone():
+                return RedirectResponse("/login?sso_error=" + urllib.parse.quote("sign-up on this server is by invitation only"),
+                                        status_code=302)
+            uid = con.execute("INSERT INTO users (email, name, password_hash, created_at, sso_subject) VALUES (?,?,?,?,?)",
+                              (who["email"], who["name"], "!", time.time(), who["sub"])).lastrowid
+            audit(con, uid, "signup_sso", who["email"])
+        else:
+            uid = user["id"]
+            con.execute("UPDATE users SET sso_subject=? WHERE id=?", (who["sub"], uid))
+        _apply_owner(con, uid, who["email"])
+        teams.accept_invites(con, uid, who["email"])
+        start_session(con, request, uid, resp)
+        audit(con, uid, "login_sso", _client_ip(request))
+    return resp
 
 
 # ---- billing --------------------------------------------------------------------------------
@@ -1763,6 +2210,18 @@ routes = [
     Route("/api/me/password", change_password, methods=["POST"]),
     Route("/api/me/delete", delete_account, methods=["POST"]),
     Route("/api/me/api-key", api_key, methods=["POST", "DELETE"]),
+    Route("/api/jobs/{jid}/export/{fmt}", job_export),
+    Route("/api/jobs/{jid}/fusion", job_fusion, methods=["POST"]),
+    Route("/api/jobs/{jid}/mission", job_mission, methods=["POST"]),
+    Route("/api/projects/{pid}/estimate", project_estimate, methods=["POST"]),
+    Route("/api/projects/{pid}/share", project_share, methods=["POST"]),
+    Route("/api/teams", teams_list, methods=["GET", "POST"]),
+    Route("/api/teams/{tid:int}/members", team_members, methods=["POST", "PATCH", "DELETE"]),
+    Route("/api/teams/{tid:int}/audit", team_audit),
+    Route("/api/auth/sso", sso_info),
+    Route("/auth/sso/start", sso_start),
+    Route("/auth/sso/callback", sso_callback),
+    Route("/api/fusion", fusion_status),
     Route("/api/plans", plans),
     Route("/api/samples", samples),
     Route("/api/templates", templates_catalog),

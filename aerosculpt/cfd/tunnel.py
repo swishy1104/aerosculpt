@@ -15,6 +15,7 @@ from . import kernels as K
 from .voxelize import build_links, voxelize_shells
 
 FLUID, SOLID, FARFIELD, OUTLET = 0, 1, 2, 3
+GROUND_CELLS = 3          # solid layers under the road: cells z = 0..2, the road surface at z = 2.5
 
 
 @dataclass
@@ -49,11 +50,13 @@ def near_field_scale(L, W, H, frontal_area, planform_area=None):
 
 
 def plan_domain(bmin, bmax, n_cells, frontal_area=None, upstream=None, downstream=None, lateral=None,
-                planform_area=None):
+                planform_area=None, ground_z=None):
     """Size a tunnel around a body bounding box so that it holds about n_cells cells.
 
     Margins scale with the body's near-field length so blockage stays near 5% for compact
     bodies (corrected afterwards) and the wake has room to develop before the outlet sponge.
+    ground_z: height of a road under the body (wind axes): the tunnel floor is then the road,
+    GROUND_CELLS solid layers whose top face lies on ground_z, instead of open air below.
     """
     bmin = np.asarray(bmin, float)
     bmax = np.asarray(bmax, float)
@@ -64,6 +67,20 @@ def plan_domain(bmin, bmax, n_cells, frontal_area=None, upstream=None, downstrea
     up = upstream if upstream is not None else max(1.5 * Ln, 0.3 * L)
     down = downstream if downstream is not None else max(4.0 * Ln, 1.5 * L)
     my = mz = lateral if lateral is not None else 1.5 * Ln
+    if ground_z is not None:
+        # the road replaces the open air below; above, the ground's image doubles the disturbance
+        gap = max(float(bmin[2] - ground_z), 0.0)
+        ext = np.array([up + L + down, W + 2 * my, gap + H + 2.0 * mz])
+        dx = (ext.prod() / n_cells) ** (1.0 / 3.0)
+        ext[2] += GROUND_CELLS * dx
+        dx = (ext.prod() / n_cells) ** (1.0 / 3.0)
+        shape = tuple(int(math.ceil(e / dx)) + 1 for e in ext)
+        origin = np.array([bmin[0] - up, bmin[1] - my, ground_z - (GROUND_CELLS - 0.5) * dx])
+        slack = (np.array(shape) - 1) * dx - ext
+        origin[1] -= slack[1] / 2
+        origin[1] = np.round(origin[1] / dx) * dx
+        body_cells = tuple(float(v) for v in (bmax - bmin) / dx)
+        return Domain(shape=shape, dx=dx, origin=origin, body_cells=body_cells)
     ext = np.array([up + L + down, W + 2 * my, H + 2 * mz])
     dx = (ext.prod() / n_cells) ** (1.0 / 3.0)
     shape = tuple(int(math.ceil(e / dx)) + 1 for e in ext)
@@ -92,6 +109,10 @@ class FlowSettings:
     ramp_steps: int = 600         # inlet velocity ramp to avoid an impulsive start
     side_sponge_frac: float = 0.10  # acoustic sponge width at inlet and side walls
     side_sponge_tau: float = 0.56   # relaxation time reached at the inlet / side walls
+    wall_model: bool = False        # log-law wall model at the flight Reynolds number (see kernels)
+    wall_nu: float = 0.0            # flight kinematic viscosity in lattice units (for the wall model)
+    ground: bool = False            # a moving road under the body (tunnel floor, see plan_domain)
+    wheels: tuple = ()              # spinning wheels, lattice units: ((cx, cy, cz, radius, half width), ...)
 
     @property
     def nu_lat(self):
@@ -124,9 +145,11 @@ class Tunnel:
         self.f = np.empty((19, nx, ny, nz), dtype=np.float32)
         self.fn = np.empty_like(self.f)
         self.flags = np.zeros((nx, ny, nz), dtype=np.uint8)
+        self.zg = GROUND_CELLS - 1 if flow.ground else -1
         self._boundary_flags()
         self.bidx = np.full((nx, ny, nz), -1, dtype=np.int32)
         self.qtab = np.zeros((0, 19), dtype=np.float32)
+        self.wall = np.zeros((1, 12), dtype=np.float32)
         self.tau_x, self.tau_y, self.tau_z = self._tau_profile()
         self.step_count = 0
         feq0 = K.feq_vector(1.0, 0.0, 0.0, 0.0)
@@ -149,6 +172,8 @@ class Tunnel:
         fl[:, :, -1] = FARFIELD
         fl[-1, :, :] = OUTLET
         fl[0, :, :] = FARFIELD
+        if self.zg >= 0:
+            fl[:, :, :self.zg + 1] = SOLID        # the road
 
     def _tau_profile(self):
         """Absorbing sponge layers: the relaxation time rises smoothly towards the outlet
@@ -172,7 +197,8 @@ class Tunnel:
         tx = ramp(nx, f.sponge_frac, f.sponge_tau)
         tx = np.maximum(tx, ramp(nx, f.side_sponge_frac, f.side_sponge_tau, only_start=True))
         ty = ramp(ny, f.side_sponge_frac, f.side_sponge_tau, both_ends=True)
-        tz = ramp(nz, f.side_sponge_frac, f.side_sponge_tau, both_ends=True)
+        # with a road the floor is a wall, not a boundary to absorb at: sponge only the ceiling
+        tz = ramp(nz, f.side_sponge_frac, f.side_sponge_tau, both_ends=not f.ground)
         return tx, ty, tz
 
     def set_geometry(self, mesh, ref_point=None):
@@ -180,20 +206,12 @@ class Tunnel:
         from ..geometry.mesh import shell_info
         comp, closed = shell_info(mesh)
         tri = self.domain.to_lattice(mesh.triangles().reshape(-1, 3)).reshape(-1, 3, 3)
-        solid, vstats = voxelize_shells(tri, comp, closed, self.domain.shape)
-        # never let the body touch the tunnel boundary planes
-        solid[:2] = False
-        solid[-2:] = False
-        solid[:, :2] = False
-        solid[:, -2:] = False
-        solid[:, :, :2] = False
-        solid[:, :, -2:] = False
+        solid, vstats = self._voxelize(tri, comp, closed)
         prev = self.flags.copy()
-        interior = (self.flags == FLUID) | (self.flags == SOLID)
-        self.flags[interior] = FLUID
-        self.flags[solid & interior] = SOLID
+        self._place_solid(solid)
         self.bidx, self.qtab, self.link_stats = build_links(self.flags == SOLID, tri)
         self.link_stats.update(vstats)
+        self.wall = wall_table(self.bidx, self.qtab, self.flow, self.zg)
         # cells uncovered by a shape change start from rest
         feq0 = K.feq_vector(1.0, 0.0, 0.0, 0.0)
         K.fill_equilibrium(self.f, self.flags, feq0, True, prev)
@@ -204,6 +222,31 @@ class Tunnel:
         self.ref = np.asarray(ref_point, dtype=np.float64)
         self.solid_cells = int((self.flags == SOLID).sum())
         return self.solid_cells
+
+    def _voxelize(self, tri, comp, closed):
+        solid, vstats = voxelize_shells(tri, comp, closed, self.domain.shape)
+        # never let the body touch the tunnel boundary planes (with a road: it may rest on it)
+        solid[:2] = False
+        solid[-2:] = False
+        solid[:, :2] = False
+        solid[:, -2:] = False
+        solid[:, :, :max(2, self.zg + 1)] = False
+        solid[:, :, -2:] = False
+        return solid, vstats
+
+    def _place_solid(self, solid):
+        interior = (self.flags == FLUID) | (self.flags == SOLID)
+        if self.zg >= 0:
+            interior[:, :, :self.zg + 1] = False      # the road stays solid
+        self.flags[interior] = FLUID
+        self.flags[solid & interior] = SOLID
+
+    def wall_args(self):
+        """Scalars of the wall treatment for this step: wall model on/off, flight viscosity, road
+        plane and road speed (the road moves with the oncoming air, as on a rolling-road rig)."""
+        f = self.flow
+        return (1.0 if f.wall_model else 0.0, max(f.wall_nu, 1e-12), self.zg,
+                self.inlet_speed() if self.zg >= 0 else 0.0)
 
     def set_forcing(self, idx=None, F=None):
         """Body forces (lattice units, per step) on fluid cells, e.g. propeller actuator disks.
@@ -248,9 +291,10 @@ class Tunnel:
         t0 = time.perf_counter()
         for _ in range(n):
             feq = K.feq_vector(1.0, self.inlet_speed(), 0.0, 0.0)
-            K.stream_collide(self.f, self.fn, self.flags, self.bidx, self.qtab,
+            wmod, nu_w, zg, ug = self.wall_args()
+            K.stream_collide(self.f, self.fn, self.flags, self.bidx, self.qtab, self.wall,
                              self.tau_x, self.tau_y, self.tau_z, feq, smag, self.flow.tau_bulk,
-                             self.ref, self.fpart)
+                             self.ref, self.fpart, wmod, nu_w, zg, ug)
             K.outlet_copy(self.fn, self.flags)
             if self.force_idx is not None:
                 from ..rc.actuator import apply_forcing
@@ -285,6 +329,42 @@ class Tunnel:
 
     def is_finite(self):
         return bool(np.isfinite(self.fpart).all()) and bool(np.isfinite(self.f[0, ::7, ::7, ::7]).all())
+
+
+def wall_table(bidx, qtab, flow, zg=-1):
+    """Per boundary cell: [0:3] the velocity of the surface there (a spinning wheel's rim, else 0),
+    [3:6] the wall normal pointing into the fluid, [6] the distance from the cell centre to the
+    wall, from the link fractions (a link x -> x - c_i crosses the wall at fraction q), [7] the
+    cell's relaxation time and [8:11] its time-filtered wall-model slip, both kept up to date by the
+    kernel (0 until its first step)."""
+    B = len(qtab)
+    out = np.zeros((max(B, 1), 12), dtype=np.float32)
+    if B == 0:
+        return out
+    c = np.array([K.CX, K.CY, K.CZ], dtype=np.float64).T[1:]          # (18, 3)
+    q = qtab[:, 1:].astype(np.float64)
+    hit = q >= 0.0
+    cn = c / np.linalg.norm(c, axis=1)[:, None]
+    n = (hit[:, :, None] * cn[None]).sum(axis=1)
+    norm = np.linalg.norm(n, axis=1)
+    n = np.where(norm[:, None] > 1e-9, n / np.maximum(norm, 1e-9)[:, None], np.array([0.0, 0.0, 1.0]))
+    proj = (c[None] * n[:, None, :]).sum(axis=2)                     # c_i . n: how far the link reaches off the wall
+    d = np.where(hit & (proj > 0.05), q * proj, np.inf).min(axis=1)
+    d = np.where(np.isfinite(d), d, 0.5)
+    out[:, 3:6] = n
+    out[:, 6] = np.clip(d, 0.25, 1.5)
+    pos = np.zeros((B, 3))
+    idx = np.nonzero(bidx >= 0)
+    pos[bidx[idx]] = np.stack(idx, axis=1)
+    if flow.wheels:
+        for cx, cy, cz, r, hw in flow.wheels:
+            rx = pos[:, 0] - cx
+            rz = pos[:, 2] - cz
+            on = (np.abs(pos[:, 1] - cy) <= hw + 1.0) & (np.hypot(rx, rz) <= r + 1.5)
+            # rolling without slip on the road (which moves at +u along x): omega = -u / r about +y
+            out[on, 0] = -flow.u_lat * rz[on] / r
+            out[on, 2] = flow.u_lat * rx[on] / r
+    return out
 
 
 def converge(tunnel: Tunnel, stats: RunStats, chunk: int, min_chunks: int, max_chunks: int,

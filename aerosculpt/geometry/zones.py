@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 from numba import njit
 
-TYPES = ("protect", "keep", "design")
+TYPES = ("protect", "keep", "design", "wheel")
 SHAPES = ("box", "cylinder")
 
 

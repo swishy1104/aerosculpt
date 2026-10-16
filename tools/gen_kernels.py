@@ -60,42 +60,122 @@ def gen_gather_plain(ind):
     return [f"{ind}f{i} = f[{i}, {src(i)}]" for i in range(Q)]
 
 
+def gen_wall_prelude(ind):
+    """Velocity the wall moves at for this boundary cell: the body surface's own motion (spinning
+    wheels, wall[b, 0:3]) plus, with the wall model on, a tangential slip that makes the shear the
+    coarse grid feels match the log law of the wall at the flight Reynolds number. The grid's shear
+    there uses the cell's own viscosity, molecular plus sub-grid, from its relaxation time of the
+    previous step (wall[b, 7], written by the collision).
+
+    The cell's velocity comes from its own post-collision populations of the previous step (the
+    collision conserves density and momentum, so these are that step's moments)."""
+    own = [f"f[{i}, x, y, z]" for i in range(Q)]
+    I2, I3, I4, I5 = (ind + " " * k for k in (4, 8, 12, 16))
+    L = [f"{ind}wsx = wall[b, 0]", f"{ind}wsy = wall[b, 1]", f"{ind}wsz = wall[b, 2]",
+         f"{ind}if wmod > 0.0:",
+         f"{I2}wr = " + " + ".join(own)]
+    for k, a in enumerate(AX):
+        L.append(f"{I2}wj{a} = " + lin([(C[i][k], own[i]) for i in range(Q)]))
+    L += [
+        f"{I2}wux = wjx / wr - wsx",
+        f"{I2}wuy = wjy / wr - wsy",
+        f"{I2}wuz = wjz / wr - wsz",
+        f"{I2}wnx = wall[b, 3]",
+        f"{I2}wny = wall[b, 4]",
+        f"{I2}wnz = wall[b, 5]",
+        f"{I2}wy = wall[b, 6]",
+        f"{I2}wun = wux * wnx + wuy * wny + wuz * wnz",
+        f"{I2}wtx = wux - wun * wnx",
+        f"{I2}wty = wuy - wun * wny",
+        f"{I2}wtz = wuz - wun * wnz",
+        f"{I2}wU = math.sqrt(wtx * wtx + wty * wty + wtz * wtz)",
+        f"{I2}if wU > 1.0e-7 and wy > 0.0:",
+        # friction velocity: viscous sublayer, else the log law (kappa 0.41, E 9) by fixed point
+        f"{I3}wut = math.sqrt(nu_w * wU / wy)",
+        f"{I3}if wy * wut / nu_w > 11.0:",
+        f"{I4}for wit in range(5):",
+        f"{I5}wut = 0.41 * wU / math.log(9.0 * wy * wut / nu_w)",
+        # slip so that the grid's no-slip shear nu_grid * (U - u_s) / y equals the wall stress u_tau^2
+        f"{I3}wtau = wall[b, 7]",
+        f"{I3}if wtau <= tau0:",
+        f"{I4}wtau = tau0",
+        f"{I3}wsl = wU - wut * wut * wy / ((wtau - 0.5) * 0.3333333333333333)",
+        f"{I3}wsl = wmod * min(max(wsl, 0.0), wU) / wU",
+        f"{I3}wtx = wsl * wtx",
+        f"{I3}wty = wsl * wty",
+        f"{I3}wtz = wsl * wtz",
+        f"{I2}else:",
+        f"{I3}wtx = 0.0",
+        f"{I3}wty = 0.0",
+        f"{I3}wtz = 0.0",
+        # time-filtered slip (about 50 steps): applied instantly, the slip feeds back on the cell
+        # velocity it is computed from and the wall force oscillates
+        f"{I2}wall[b, 8] += 0.02 * (wtx - wall[b, 8])",
+        f"{I2}wall[b, 9] += 0.02 * (wty - wall[b, 9])",
+        f"{I2}wall[b, 10] += 0.02 * (wtz - wall[b, 10])",
+        f"{I2}wsx += wall[b, 8]",
+        f"{I2}wsy += wall[b, 9]",
+        f"{I2}wsz += wall[b, 10]",
+    ]
+    return L
+
+
 def gen_gather_wall(ind):
-    """Bouzidi linear interpolated bounce-back for every link that crosses the wall, plus the
-    momentum-exchange force and moment of that link."""
-    L = [f"{ind}f0 = f[0, x, y, z]"]
+    """Bouzidi linear interpolated bounce-back for every link that crosses the wall, with the
+    moving-wall term 6 w_i (c_i . u_w) (Ladd; divided by 2q on the far side, Bouzidi 2001), plus
+    the momentum-exchange force and moment of that link. Links into the road (cells at or below
+    z = zg, moving at ug along x) carry the road's speed and are not part of the body's force."""
+    L = [f"{ind}f0 = f[0, x, y, z]"] + gen_wall_prelude(ind)
     for i in range(1, Q):
         j = OPP[i]
         cx, cy, cz = C[i]
+        w6 = 6.0 * W[i]
+        body_u = lin([(cx, "wsx"), (cy, "wsy"), (cz, "wsz")])
         L += [
             f"{ind}q = qtab[b, {i}]",
             f"{ind}if q < 0.0:",
             f"{ind}    f{i} = f[{i}, {src(i)}]",
             f"{ind}else:",
             f"{ind}    fj = f[{j}, x, y, z]",
-            f"{ind}    if q < 0.5:",
-            f"{ind}        if flags[{away(i)}] != 1:",
-            f"{ind}            f{i} = 2.0 * q * fj + (1.0 - 2.0 * q) * f[{j}, {away(i)}]",
-            f"{ind}        else:",
-            f"{ind}            f{i} = fj",
-            f"{ind}    else:",
-            f"{ind}        f{i} = fj / (2.0 * q) + (1.0 - 1.0 / (2.0 * q)) * f[{i}, x, y, z]",
-            f"{ind}    s = fj + f{i}",
+        ]
+        fi = ind + "    "
+        if cz == 1:
+            # only a link pulled from the cell below can come from the road
+            L += [f"{ind}    gl = zg >= 0 and z - 1 <= zg",
+                  f"{ind}    if gl:",
+                  f"{ind}        cuw = {w6!r} * ({cx}.0 * ug)" if cx else f"{ind}        cuw = 0.0",
+                  f"{ind}    else:",
+                  f"{ind}        cuw = {w6!r} * ({body_u})"]
+        else:
+            L += [f"{ind}    cuw = {w6!r} * ({body_u})"]
+        L += [
+            f"{fi}if q < 0.5:",
+            f"{fi}    if flags[{away(i)}] != 1:",
+            f"{fi}        f{i} = 2.0 * q * fj + (1.0 - 2.0 * q) * f[{j}, {away(i)}] + cuw",
+            f"{fi}    else:",
+            f"{fi}        f{i} = fj + cuw",
+            f"{fi}else:",
+            f"{fi}    f{i} = fj / (2.0 * q) + (1.0 - 1.0 / (2.0 * q)) * f[{i}, x, y, z] + cuw * 0.5 / q",
         ]
         # force on the body from this link: c_j (fj + fi) with c_j = -c_i, applied at x - q c_i
+        fo = fi
+        if cz == 1:
+            L.append(f"{fi}if not gl:")
+            fo = fi + "    "
         dF = [-cx, -cy, -cz]
-        L += [f"{ind}    dFx = {dF[0]}.0 * s",
-              f"{ind}    dFy = {dF[1]}.0 * s",
-              f"{ind}    dFz = {dF[2]}.0 * s",
-              f"{ind}    Fx += dFx",
-              f"{ind}    Fy += dFy",
-              f"{ind}    Fz += dFz",
-              f"{ind}    rx = x - q * {cx}.0 - refx",
-              f"{ind}    ry = y - q * {cy}.0 - refy",
-              f"{ind}    rz = z - q * {cz}.0 - refz",
-              f"{ind}    Mx += ry * dFz - rz * dFy",
-              f"{ind}    My += rz * dFx - rx * dFz",
-              f"{ind}    Mz += rx * dFy - ry * dFx"]
+        L += [f"{fo}s = fj + f{i}",
+              f"{fo}dFx = {dF[0]}.0 * s",
+              f"{fo}dFy = {dF[1]}.0 * s",
+              f"{fo}dFz = {dF[2]}.0 * s",
+              f"{fo}Fx += dFx",
+              f"{fo}Fy += dFy",
+              f"{fo}Fz += dFz",
+              f"{fo}rx = x - q * {cx}.0 - refx",
+              f"{fo}ry = y - q * {cy}.0 - refy",
+              f"{fo}rz = z - q * {cz}.0 - refz",
+              f"{fo}Mx += ry * dFz - rz * dFy",
+              f"{fo}My += rz * dFx - rx * dFz",
+              f"{fo}Mz += rx * dFy - ry * dFx"]
     return L
 
 
@@ -127,6 +207,10 @@ def gen_collide(ind):
         f"{ind}Nyz = Pyz - rho * uy * uz",
         f"{ind}Qn = math.sqrt(Nxx * Nxx + Nyy * Nyy + Nzz * Nzz + 2.0 * (Nxy * Nxy + Nxz * Nxz + Nyz * Nyz))",
         f"{ind}tau = 0.5 * (tau0 + math.sqrt(tau0sq + smag * Qn * irho))",
+        # wall cells remember their relaxation time: next step's wall model uses the actual local
+        # (molecular + sub-grid) viscosity for the slip
+        f"{ind}if b >= 0:",
+        f"{ind}    wall[b, 7] = tau",
         f"{ind}om1 = 1.0 - 1.0 / tau",
         f"{ind}usq = 1.5 * (ux * ux + uy * uy + uz * uz)",
         f"{ind}tr = Nxx + Nyy + Nzz",
@@ -168,12 +252,16 @@ def gen_stream_collide():
     I3 = " " * 16
     L = [
         "@njit(parallel=True, fastmath=True, cache=True)",
-        "def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, tau_bulk, ref, fpart):",
+        "def stream_collide(f, fn, flags, bidx, qtab, wall, tau_x, tau_y, tau_z, feq_ff, smag, tau_bulk, ref, fpart,",
+        "                   wmod, nu_w, zg, ug):",
         '    """One fused pull-stream + regularized-BGK/Smagorinsky collision step.',
         "",
         "    f holds post-collision populations of the previous step; fn receives the new ones.",
         "    flags: 0 fluid, 1 solid, 2 far-field (Dirichlet equilibrium), 3 outlet.",
-        "    Wall links use Bouzidi linear interpolated bounce-back with fractions qtab[b, i].",
+        "    Wall links use Bouzidi linear interpolated bounce-back with fractions qtab[b, i], moving",
+        "    walls (wall[b, 0:3]: the surface's own velocity, e.g. a spinning wheel) and, with wmod > 0,",
+        "    a log-law wall model at the flight viscosity nu_w (wall[b, 3:6] normal, wall[b, 6] distance).",
+        "    zg >= 0: cells at z <= zg are the road, moving at ug along x and left out of the force.",
         "    The stress trace relaxes with tau_bulk (Dellar bulk viscosity) to damp acoustics.",
         "    fpart[x] accumulates momentum-exchange force and moment (about ref) per x-slab.",
         '    """',
@@ -257,7 +345,8 @@ def gen_accumulate():
 HEADER = '''"""GENERATED by tools/gen_kernels.py -- do not edit by hand.
 
 D3Q19 lattice-Boltzmann kernels: regularized BGK collision with a Smagorinsky
-sub-grid model, Bouzidi interpolated bounce-back walls, momentum-exchange forces.
+sub-grid model, Bouzidi interpolated bounce-back walls (moving walls, a log-law wall
+model, a moving road), momentum-exchange forces.
 """
 import math
 
@@ -327,7 +416,8 @@ def gen_cuda_stream_collide():
     I = " " * 4
     L = [
         "@cuda.jit(fastmath=True, cache=True)",
-        "def stream_collide(f, fn, flags, bidx, qtab, tau_x, tau_y, tau_z, feq_ff, smag, tau_bulk, ref, fpart):",
+        "def stream_collide(f, fn, flags, bidx, qtab, wall, tau_x, tau_y, tau_z, feq_ff, smag, tau_bulk, ref, fpart,",
+        "                   wmod, nu_w, zg, ug):",
         '    """One fused pull-stream + collision step, one thread per cell (see kernels.py for the',
         '    model). Wall-link forces are added to fpart[x] with atomics (fpart zeroed beforehand)."""',
         "    z, y, x = cuda.grid(3)",

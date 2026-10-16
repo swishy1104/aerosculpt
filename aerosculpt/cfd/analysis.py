@@ -14,6 +14,13 @@ Physics model, stated plainly so it can be shown to users:
   depend on speed there, so one run per angle gives the forces at every speed exactly.
 * Forces are corrected for tunnel blockage with a Maskell-type factor (theta = 2.5),
   calibrated against the sphere drag curve (see validation.py).
+* Wall model: in the hybrid regime with a turbulent flight Reynolds number (above
+  WALL_MODEL_RE) the wall links slip tangentially so the shear the coarse grid feels matches
+  the log law of the wall at the flight Reynolds number. A grid capped at Re 2e4-8e4 otherwise
+  grows thick, laminar-like boundary layers that separate too early and over-reward shapes that
+  avoid separation; the wall model gives the attached, thin turbulent layer of the real flow.
+* Road: cars can run over a moving road (a rolling-road rig: the floor moves with the air, so
+  there is no floor boundary layer) with spinning wheels (moving-wall bounce-back on the rims).
 """
 from __future__ import annotations
 
@@ -28,6 +35,7 @@ from ..geometry.mesh import Mesh, metrics, projected_area
 from .tunnel import FlowSettings, RunStats, Tunnel, converge, near_field_scale, plan_domain
 
 MASKELL_THETA = 2.5
+WALL_MODEL_RE = 5e5        # flight Reynolds number (body length) above which the boundary layer is turbulent
 SNAPSHOT_BUDGET_BYTES = 1.2e9
 
 
@@ -326,15 +334,26 @@ class Evaluator:
     """
 
     def __init__(self, envelope_min, envelope_max, frontal_area, body_length, ref_area, ref_length,
-                 fidelity: Fidelity, log=None, cancel=None, planform_area=None, cache=None):
+                 fidelity: Fidelity, log=None, cancel=None, planform_area=None, cache=None, ground=None):
+        """ground: {"z": road height (wind axes, m), "wheels": [(x, y, z, radius, width), ...] in m}
+        puts the body on a moving road with spinning wheels (zero angles only)."""
         self.fid = fidelity
+        self.ground = ground
         self.cache = cache
         self.cache_hits = 0
         self.log = log or (lambda msg: None)
         self.cancel = cancel or (lambda: False)
         L, W, H = (np.asarray(envelope_max) - np.asarray(envelope_min))
-        self.domain = plan_domain(envelope_min, envelope_max, fidelity.cells, frontal_area, planform_area=planform_area)
+        self.domain = plan_domain(envelope_min, envelope_max, fidelity.cells, frontal_area, planform_area=planform_area,
+                                  ground_z=None if ground is None else float(ground["z"]))
         dx = self.domain.dx
+        self.wheels = ()
+        if ground is not None:
+            lat = []
+            for x, y, z, r, w in ground.get("wheels") or []:
+                c = self.domain.to_lattice([x, y, z])
+                lat.append((float(c[0]), float(c[1]), float(c[2]), float(r) / dx, 0.5 * float(w) / dx))
+            self.wheels = tuple(lat)
         self.L_body = float(body_length)
         self.ref_area = float(ref_area)
         self.ref_length = float(ref_length)
@@ -350,9 +369,13 @@ class Evaluator:
         self.cold_min_chunks = int(math.ceil(0.8 * flush / self.chunk)) + fidelity.avg_chunks
         self.warm_min_chunks = fidelity.avg_chunks + 2
 
-    def _flow_for(self, re_sim):
-        return FlowSettings(u_lat=self.fid.u_lat, re_sim=re_sim, l_ref_cells=self.L_body / self.domain.dx,
-                            smagorinsky=0.0 if re_sim < 500 else 0.14)
+    def _flow_for(self, re_sim, re_flight=None):
+        L_cells = self.L_body / self.domain.dx
+        wm = wall_model_on(re_sim, re_flight)
+        return FlowSettings(u_lat=self.fid.u_lat, re_sim=re_sim, l_ref_cells=L_cells,
+                            smagorinsky=0.0 if re_sim < 500 else 0.14,
+                            wall_model=wm, wall_nu=self.fid.u_lat * L_cells / re_flight if wm else 0.0,
+                            ground=self.ground is not None, wheels=self.wheels)
 
     def reset(self):
         """Fresh lattice after a diverged run; the next run starts cold."""
@@ -367,16 +390,20 @@ class Evaluator:
                 "body_cells": [round(v, 1) for v in self.domain.body_cells], "u_lat": self.fid.u_lat,
                 # near-field scale in cells: mean chord for flat airframes, else the body's size across
                 "ln_cells": round(self.Ln_cells, 1),
-                "fidelity": self.fid.name, "re_cap": self.fid.re_cap,
+                "fidelity": self.fid.name, "re_cap": self.fid.re_cap, "ground": self.ground is not None,
+                "wheels": len(self.wheels),
                 "backend": getattr(self.tunnel, "backend", "cpu") if self.tunnel is not None else None,
                 "ref_area": self.ref_area, "ref_length": self.ref_length}
 
-    def run(self, mesh: Mesh, re_sim: float, key=None, want_fields=True, progress=None, forcing=None, groups=None):
+    def run(self, mesh: Mesh, re_sim: float, key=None, want_fields=True, progress=None, forcing=None, groups=None,
+            re_flight=None):
         """One CFD run of `mesh` (wind axes, metres) at tunnel Reynolds number `re_sim`.
         forcing: optional (cells, lattice forces) for propeller actuator disks.
         groups: optional part id per face; pressure, friction and compressibility data are then
-        also integrated part by part (run["groups"]), e.g. the fuselage alone of a winged body."""
-        flow = self._flow_for(re_sim)
+        also integrated part by part (run["groups"]), e.g. the fuselage alone of a winged body.
+        re_flight: the flight Reynolds number this run stands for (turns the wall model on when the
+        flight boundary layer is turbulent and the grid runs below it)."""
+        flow = self._flow_for(re_sim, re_flight)
         ckey = None
         if self.cache is not None:
             from .cache import case_key
@@ -399,7 +426,7 @@ class Evaluator:
         if self.tunnel is None:
             from .gpu import make_tunnel
             self.tunnel = make_tunnel(self.domain, flow, self.log)
-        elif self.flow is None or abs(self.flow.re_sim - re_sim) > 1e-9 * re_sim:
+        elif self.flow is None or self.flow != flow:
             self.tunnel.set_flow(flow)
         self.flow = flow
         tun = self.tunnel
@@ -497,6 +524,7 @@ class Evaluator:
             "cl": float(C_total[2]), "cl_pressure": float(C_press[2]), "cs": float(C_total[1]),
             "cm_roll": float(C_mom[0]), "cm_pitch": float(C_mom[1]), "cm_yaw": float(C_mom[2]),
             "friction_integral": friction_integral, "ref_area": self.ref_area, "ref_length": self.ref_length,
+            "wall_model": bool(flow.wall_model),
             "blockage": blockage, "blockage_factor": k, "geometry": m, "compress": bins,
             "groups": parts, "cached": False,
         }
@@ -564,17 +592,33 @@ class Evaluator:
                     "cd": (h[:, 1] / (q_lat * a_lat) / k).round(5).tolist()}
         else:
             conv = {"step": [], "cd": []}
+        # a coarse copy of the whole mean field (VTK export) and its vortex surfaces (3D view)
+        from .volume import coarse_volume, vortex_payload
+        vol = coarse_volume(rho, ux, uy, uz, solid, dom, u, k)
+        try:
+            vortex = vortex_payload(vol, self.Ln_cells * dom.dx)
+        except Exception:  # noqa: BLE001 - a picture must not fail the run
+            vortex = None
         return {
             "surface_cp": _b64(_quantize(cp_face, -2.0, 1.0)), "surface_cp_range": [-2.0, 1.0],
             "surface_speed": _b64(_quantize(edge_face, 0.0, 1.6)),
             "slices": slices,
             "streamlines": {"points": _b64(phys), "speed": _b64(spd_line),
                             "starts": starts.tolist(), "speed_range": [0.0, 1.6]},
+            "vortex": vortex,
             "convergence": conv,
+            "_volume": vol, "_cp_face": np.asarray(cp_face, np.float16),
         }
 
 
-def analyze(mesh: Mesh, conditions: Conditions, fidelity="draft", log=None, progress=None):
+def wall_model_on(re_sim, re_flight):
+    """The wall model stands in for a turbulent boundary layer the grid cannot carry: on when the
+    flight boundary layer is turbulent and the tunnel runs well below the flight Reynolds number."""
+    return re_flight is not None and re_flight >= WALL_MODEL_RE and re_flight > 1.5 * re_sim
+
+
+def analyze(mesh: Mesh, conditions: Conditions, fidelity="draft", log=None, progress=None, wall_model=True,
+            ground=None):
     """One cold run of a single mesh (wind axes, metres) at one condition. Returns the run,
     the forces at that speed and the setup, flattened (used by validation and tests)."""
     fid = FIDELITY[RETIRED.get(fidelity, fidelity)] if isinstance(fidelity, str) else fidelity
@@ -583,9 +627,10 @@ def analyze(mesh: Mesh, conditions: Conditions, fidelity="draft", log=None, prog
     L = float(hi[0] - lo[0])
     air = conditions.air()
     ev = Evaluator(lo, hi, af, L, conditions.ref_area or af, conditions.ref_length or L, fid, log=log,
-                   planform_area=projected_area(mesh, 2))
-    re = min(conditions.speed * L / air["nu"], fid.re_cap)
-    run = ev.run(mesh, re, progress=progress)
+                   planform_area=projected_area(mesh, 2), ground=ground)
+    re_fl = conditions.speed * L / air["nu"]
+    re = min(re_fl, fid.re_cap)
+    run = ev.run(mesh, re, progress=progress, re_flight=re_fl if wall_model else None)
     sp = at_speed(run, conditions.speed, air, L)
     out = dict(run)
     out.update(sp)

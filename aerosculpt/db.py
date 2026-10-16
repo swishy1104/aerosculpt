@@ -132,19 +132,31 @@ def transaction():
         con.close()
 
 
+def _add_column(con, table, column, decl):
+    cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def init_db():
+    from .teams import migrate as teams_migrate
     with db() as con:
         for stmt in SCHEMA:
             con.execute(stmt)
+        # columns added after the first release (idempotent)
+        _add_column(con, "projects", "team_id", "INTEGER")
+        _add_column(con, "audit", "team_id", "INTEGER")
+        _add_column(con, "users", "sso_subject", "TEXT")
+        teams_migrate(con)
 
 
 def period_key(ts=None):
     return time.strftime("%Y-%m", time.gmtime(ts or time.time()))
 
 
-def audit(con, user_id, action, detail=""):
-    con.execute("INSERT INTO audit (user_id, action, detail, at) VALUES (?, ?, ?, ?)",
-                (user_id, action, detail[:2000], time.time()))
+def audit(con, user_id, action, detail="", team_id=None):
+    con.execute("INSERT INTO audit (user_id, action, detail, at, team_id) VALUES (?, ?, ?, ?, ?)",
+                (user_id, action, (detail or "")[:2000], time.time(), team_id))
 
 
 def usage_for(con, user_id):

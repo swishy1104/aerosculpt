@@ -60,6 +60,9 @@ class Settings:
     # public guest demo: "Try it without an account" makes a temporary account on the Guest plan
     # (a few credits, draft and standard fidelity, lowest queue priority), deleted after GUEST_HOURS
     guest_demo = _bool("GUEST_DEMO", False)
+    # "Send to Fusion" through the FusionMCPBridge add-in: only where the app and Fusion share a
+    # machine (local preview by default), never on a public deployment unless forced
+    fusion_bridge = _bool("FUSION_BRIDGE", open_access)
     guest_hours = float(os.environ.get("GUEST_HOURS", "24"))
     guest_max_active = int(os.environ.get("GUEST_MAX_ACTIVE", "60"))
     # optional AI design assistant (aerosculpt/ai.py): any OpenAI-compatible chat endpoint, e.g. a

@@ -180,7 +180,7 @@ def test_automatic_optimization_end_to_end(tmp_path, monkeypatch):
     from aerosculpt.optimize import driver
     from aerosculpt.optimize.runner import Runner
 
-    def fake_run(self, mesh, re_sim, key=None, want_fields=True, progress=None, forcing=None, groups=None):
+    def fake_run(self, mesh, re_sim, key=None, want_fields=True, progress=None, forcing=None, groups=None, re_flight=None):
         lo, hi = mesh.bbox()
         size = hi - lo
         cd = 0.8 * size[1] * size[2] / self.ref_area + 0.02

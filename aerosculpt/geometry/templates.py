@@ -247,9 +247,14 @@ def tail_profile(x0, length, R, Rb, n=16):
 
 
 # ---- meshing -----------------------------------------------------------------------------
+_RECORD = None      # list while a smooth-CAD export records the sections every part is lofted through
+
+
 def loft_rings(rings, cap_start=True, cap_end=True):
     """Closed shell through rings (S, M, 3); rings of zero size collapse to a point. Vectorised."""
     rings = np.asarray(rings, float)
+    if _RECORD is not None:
+        _RECORD.append(("smooth", rings.copy()))
     S, M, _ = rings.shape
     verts, idx = [], []
     n = 0
@@ -330,6 +335,8 @@ def _prism(poly_xr, thickness, angle_deg):
         j = (i + 1) % n
         f += [[i, j, n + j], [i, n + j, n + i], [cb, j, i], [ct, n + i, n + j]]
     m = Mesh(v, np.array(f))
+    if _RECORD is not None:
+        _RECORD.append(("ruled", np.stack([bot, top])))
     return m if m.signed_volume() > 0 else Mesh(v, np.array(f)[:, ::-1])
 
 
@@ -386,6 +393,18 @@ def _fuselage(v, M, n_nose, problems):
     info = {"length": L, "diameter": D, "nose_fineness": Ln / D, "body_fineness": L / D, "base_diameter": 2 * Rb,
             "x_tip": float(X[0]), "body_wetted": float(body.area() - math.pi * Rb * Rb)}
     return body, info, R
+
+
+def cad_sections(tid, values):
+    """The sections every part of the template is lofted through, for a smooth CAD export:
+    [(kind, rings)], kind "smooth" (B-spline sections) or "ruled" (flat-sided prisms)."""
+    global _RECORD
+    _RECORD = []
+    try:
+        build(tid, values)
+        return _RECORD
+    finally:
+        _RECORD = None
 
 
 def build(tid, values, preview=False):
@@ -466,6 +485,9 @@ def build(tid, values, preview=False):
         Rx = np.array([[1.0, 0, 0], [0, 0, -1.0], [0, 1.0, 0]])
         fm = Mesh(fm.v @ Rx.T, fm.f)
         fm = fm.transformed(t=[0.0, 0.0, -0.5 * Rb])
+        if _RECORD is not None:                       # the recorded fin sections move with it
+            kind, rings = _RECORD[-1]
+            _RECORD[-1] = (kind, rings @ Rx.T + np.array([0.0, 0.0, -0.5 * Rb]))
         parts.append((fm, VTAIL))
         drag_surfaces.append(DragSurface("vertical tail", vh, vc, 0.55 * vc, exposed_from=Rb))
         info["min_thickness"] = min(info["min_thickness"], 0.10 * 0.7 * hc, 0.10 * 0.55 * vc)

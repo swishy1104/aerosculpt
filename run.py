@@ -71,7 +71,15 @@ def main(argv=None):
         uvicorn.run("aerosculpt.web:app", host=a.host or settings.host, port=a.port or settings.port,
                     proxy_headers=True, forwarded_allow_ips=settings.forwarded_allow_ips, log_level="info")
     finally:
+        # clean shutdown: the jobs the workers were running go back to the queue and resume on the
+        # next start (the result cache replays the CFD runs they had finished)
+        import socket
+        from aerosculpt.jobs import release_jobs
         for p in procs:
+            try:
+                release_jobs(f"{socket.gethostname()}:{p.pid}")
+            except Exception:  # noqa: BLE001
+                pass
             p.terminate()
 
 

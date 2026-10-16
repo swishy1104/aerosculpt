@@ -86,7 +86,11 @@ def estimate_runs(spec: dict, re_groups: int = 1) -> dict:
         per_design = len(env.get("aoas", [0])) * max(1, re_groups)
     fid = spec.get("fidelity", "draft")
     if spec.get("kind") != "optimize":
-        return {fid: per_design}
+        runs = {fid: per_design}
+        if spec.get("grid_study"):        # two coarser grids at one angle, billed at the exploration rate
+            per_angle = per_design // max(1, len(env.get("aoas", [0])))
+            runs[EXPLORE_FID.get(fid, "coarse")] = 2 * per_angle
+        return runs
     o = spec.get("optimize", {})
     tid = (spec.get("template") or {}).get("id")
     if tid in ("wing", "uav") and spec.get("tunnel") != "supersonic":
@@ -123,7 +127,7 @@ def check_spec(spec: dict, plan: dict):
         raise PermissionError(f"{plan['name']} sweeps up to {plan['max_angles']} angles of attack.")
     if len(env.get("machs") or env.get("speeds") or []) > plan["max_speeds"]:
         raise PermissionError(f"{plan['name']} sweeps up to {plan['max_speeds']} {'Mach numbers' if supersonic else 'airspeeds'}.")
-    if len(spec.get("zones", [])) > plan["max_zones"]:
+    if len([z for z in spec.get("zones", []) if z.get("type") != "wheel"]) > plan["max_zones"]:
         raise PermissionError(f"{plan['name']} allows {plan['max_zones']} protected regions.")
     if len(spec.get("features", [])) > plan.get("max_features", 0):
         raise PermissionError(f"{plan['name']} allows {plan.get('max_features', 0)} shape features.")
