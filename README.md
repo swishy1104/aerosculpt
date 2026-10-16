@@ -180,7 +180,7 @@ lock and an optimizer range; free ones become search variables (`optimize/spaces
 
 `python desktop.py` runs AeroSculpt privately on 127.0.0.1 (no sign-in, data in `%LOCALAPPDATA%\AeroSculpt`,
 NVIDIA GPU or CPU) and opens the browser. `pyinstaller desktop.spec --noconfirm` builds `dist/AeroSculpt/AeroSculpt.exe`
-(one folder, about 1.3 GB, including the CUDA runtime from the `nvidia-*` pip packages and Anaconda's Intel
+(one folder, about 1.4 GB, including the CUDA runtime from the `nvidia-*` pip packages and Anaconda's Intel
 runtime DLLs). `AeroSculpt.exe --check` reports whether the GPU and STEP support work on that computer (`--verbose` adds the
 error trace when the GPU does not). The first
 start compiles the solver (a few minutes, cached in the user folder afterwards).
