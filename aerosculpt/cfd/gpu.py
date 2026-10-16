@@ -14,6 +14,7 @@ import logging
 import math
 import os
 import time
+import traceback
 import warnings
 
 import numpy as np
@@ -51,6 +52,7 @@ def available():
                     cuda.get_current_device().name, bytes) else str(cuda.get_current_device().name)
         except Exception as e:  # noqa: BLE001 - any CUDA problem means: use the CPU
             _STATE["why"] = f"{type(e).__name__}: {e}"
+            _STATE["trace"] = traceback.format_exc()
         if not _STATE["ok"] and mode in ("1", "on", "yes", "true"):
             raise RuntimeError(f"AEROSCULPT_GPU=1 but the GPU cannot be used ({_STATE['why']})")
     return _STATE["ok"]

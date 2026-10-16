@@ -286,8 +286,12 @@ def record_throughput():
     tmp = settings.data_dir / "compute.json.tmp"
     tmp.write_text(json.dumps(info))
     tmp.replace(settings.data_dir / "compute.json")
-    logging.getLogger(__name__).info("tunnel: %s%s, %.0f million cell updates/s", info["backend"],
-                                     f" ({info['device']})" if info.get("device") else "", info["mlups"])
+    why = ""
+    if info["backend"] == "cpu":
+        from .cfd import gpu
+        why = f" (no GPU: {gpu._STATE['why']})" if gpu._STATE.get("why") else ""
+    logging.getLogger(__name__).info("tunnel: %s%s, %.0f million cell updates/s%s", info["backend"],
+                                     f" ({info['device']})" if info.get("device") else "", info["mlups"], why)
 
 
 def worker_id():
