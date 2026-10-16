@@ -41,6 +41,13 @@ def gci(f1, f2, f3, h1, h2, h3):
         p = p_new
     behaviour = "monotonic" if s > 0 else "oscillatory"
     note = None
+    if s < 0:
+        # the value goes up and down with refinement: no extrapolation can be trusted
+        ea21 = abs((f1 - f2) / f1) if f1 else abs(f1 - f2)
+        out.update({"order": p if (ok and math.isfinite(p)) else None, "order_used": 1.0, "extrapolated": f1,
+                    "gci_fine": FS * ea21 / (r21 - 1.0), "error_fine": ea21, "behaviour": behaviour,
+                    "note": "the value oscillates between grids, so there is no extrapolation and the band uses order 1"})
+        return out
     if not ok or not math.isfinite(p) or p < 0.5 or p > 6.0:
         # outside the asymptotic range: no reliable extrapolation; GCI with a conservative order 1
         note = ("the grids are not yet in the asymptotic range (apparent order "

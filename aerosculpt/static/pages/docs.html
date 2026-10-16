@@ -25,7 +25,9 @@
     Contents: <a href="#model">1 Model</a> · <a href="#protect">2 Protect</a> · <a href="#envelope">3 Flight envelope</a> ·
     <a href="#simulate">4 Simulate</a> · <a href="#optimize">5 Optimize</a> · <a href="#templates">templates (named dimensions)</a> ·
     <a href="#rockets">rockets</a> · <a href="#uav">fixed-wing UAVs</a> ·
-    <a href="#rc">RC tunnel</a> · <a href="#supersonic">Supersonic tunnel</a> · <a href="#physics">physics</a> · <a href="#limits">limits</a> · <a href="#api">API</a></p>
+    <a href="#rc">RC tunnel</a> · <a href="#supersonic">Supersonic tunnel</a> · <a href="#accuracy">accuracy tools</a> · <a href="#cars">cars</a> ·
+    <a href="#cad">CAD and Fusion</a> · <a href="#structure">structure and mission</a> · <a href="#outputs">reports and exports</a> ·
+    <a href="#teams">teams</a> · <a href="#desktop">desktop app</a> · <a href="#physics">physics</a> · <a href="#limits">limits</a> · <a href="#api">API</a></p>
 
   <h2 id="model">1. Model</h2>
   <ul>
@@ -254,6 +256,64 @@
       interactions, one part shadowing another, transient heat soak (radiative equilibrium is the conservative steady state).</li>
   </ul>
 
+  <h2 id="accuracy">Accuracy tools</h2>
+  <p><b>Wall model.</b> A grid can carry a limited Reynolds number, so on its own it grows thick, laminar-like boundary layers that separate too early.
+    When the flight boundary layer is turbulent (Reynolds number above 5×10<sup>5</sup>), every wall cell slips tangentially by just enough that the shear the
+    grid feels equals the log law of the wall at the <i>flight</i> Reynolds number (a wall-modelled LES). It is on automatically and costs nothing.</p>
+  <p><b>Refine near the body</b> (Simulate step). After the normal run, a box around the body and its near wake is run again on a grid about twice as fine,
+    its faces held at the first run's mean flow — a nested "zoom" grid. Forces come from the fine grid. It costs about 3× a run, where refining the whole
+    tunnel twice as finely would cost about 16×. On the Ahmed car body it brings the drag from about 2× the measured value to within about 25%.</p>
+  <p><b>Check grid convergence</b> (Simulate step). The design is also run on two coarser grids (2.2× fewer cells each, refinement ratio 1.3); from the three
+    drag values the result shows the observed order of accuracy, the grid-independent (Richardson-extrapolated) value and the uncertainty on your grid as a
+    Grid Convergence Index (Roache; procedure of Celik et al., 2008). When the values oscillate between grids, no extrapolation is shown and the band is
+    conservative. About 1.6× the time; the coarse runs are billed at the exploration rate.</p>
+  <p><b>Confirmation on a different grid.</b> The optimizer explores on one grid and confirms on another, re-running each candidate at two sub-cell shifts,
+    so a shape that only wins through one grid's error is not reported.</p>
+
+  <h2 id="cars">Cars and ground vehicles</h2>
+  <p>Turn on <b>Rolling road</b> in the flight envelope. The tunnel floor becomes a road moving with the air, as on a moving-belt wind tunnel, and the car
+    sits level on it (only 0° is run). <b>Detect wheels</b> proposes a box around each wheel from the lowest points of the model — check and adjust them;
+    wheels spin at road speed (rolling without slip) and are never reshaped. Keep at least 3 grid cells between the road and the underbody: below that
+    the result warns, and <b>Refine near the body</b> doubles the resolution there. Not modelled: cooling flow through the radiator, and underbody detail
+    the model does not have.</p>
+
+  <h2 id="cad">CAD exchange and Fusion</h2>
+  <p><b>In:</b> STL, OBJ, STEP and IGES. STEP/IGES are tessellated with the OpenCASCADE kernel (by curvature: fine on a nose radius, coarse on a flat side);
+    the original file is kept beside the project. <b>Out:</b> a template design downloads as smooth STEP solids lofted through its own sections, which a CAD
+    system can fillet, shell and dimension; any other design as a faceted STEP solid (exact to its triangles, up to 60,000), or STL.</p>
+  <p><b>Fusion.</b> Template designs export a <i>Fusion script</i> that writes every dimension as a Fusion user parameter (named like the template's), so a
+    parametric Fusion model built on the same names rebuilds to the optimized shape. When AeroSculpt runs on the same computer as Fusion (the desktop app,
+    or a local preview) and the FusionMCPBridge add-in is running, <b>Send dimensions to Fusion</b> and <b>Import into Fusion</b> do it directly; this is
+    never available on a public server.</p>
+
+  <h2 id="structure">Structure and mission (winged designs)</h2>
+  <p>Every wing design the optimizer considers gets a spar: two caps at the airfoil's depth sized for load factor × 1.5 × the weight (strength), then
+    grown until the tip bends no more than the allowed fraction of the semi-span at limit load (stiffness). A wing too thin to hold the caps is rejected,
+    so the optimizer can no longer return a wing that would break. Set the material, load factor and stiffness under Optimize → Structure. The results
+    plot drag against structure mass for every design; the front of that cloud is the trade-off, and any point opens as a new project.</p>
+  <p><b>Mission.</b> From the drag polar at the flight weight: stall speed, best-endurance and best-range speeds, endurance and range from your battery
+    (Wh, usable fraction, propulsion efficiency) and the rate of climb from the motor's power. A design optimized for cruise drag often stalls faster and
+    flies shorter — the mission table shows it.</p>
+
+  <h2 id="outputs">Reports, exports and comparing runs</h2>
+  <p>Every finished run downloads as a <b>PDF engineering report</b> (setup, grid, conditions, forces, polars, convergence, flow slices, geometry, how the
+    optimizer spent its runs, structure, mission, and the methods with the solver's measured accuracy), as <b>flow fields for ParaView</b> (VTK: the
+    mean velocity, pressure and Q-criterion on a grid, and the body with its surface pressure), and as STEP. The 3D view shows <b>vortex surfaces</b>
+    (Q-criterion) beside streamlines and slices. In the Runs tab, tick two runs and <b>Compare</b> them condition by condition.</p>
+
+  <h2 id="teams">Teams and single sign-on</h2>
+  <p>On the Team plan, create a team under Account and invite colleagues by email (someone without an account joins when they first sign in). Share a
+    project from its Model step. Roles: <b>viewer</b> opens results and downloads reports; <b>editor</b> also changes the design and runs jobs (billed to
+    whoever starts them); <b>admin</b> manages members and reads the team's <b>audit trail</b> (who shared, ran, invited or changed what, and when);
+    <b>owner</b> can do everything. A server can offer <b>single sign-on</b> through any OpenID Connect provider (Okta, Microsoft Entra ID, Google
+    Workspace, Auth0, Keycloak): set <code>OIDC_ISSUER</code>, <code>OIDC_CLIENT_ID</code>, <code>OIDC_CLIENT_SECRET</code> and optionally
+    <code>OIDC_ALLOWED_DOMAINS</code>; the provider's ID token is verified before any account is touched.</p>
+
+  <h2 id="desktop">Desktop app</h2>
+  <p>AeroSculpt also runs as a desktop app on your own computer: <code>AeroSculpt.exe</code> (or <code>python desktop.py</code>) starts it privately on
+    127.0.0.1 with no sign-in, keeps projects in your user folder, simulates on your NVIDIA graphics card (or the CPU) and opens it in your browser.
+    Nothing leaves the computer, which suits CAD that cannot be uploaded. Build it with <code>pyinstaller desktop.spec</code>.</p>
+
   <h2 id="physics">How the solver works</h2>
   <p>AeroSculpt builds a uniform voxel wind tunnel sized to the body (about 1.5 near-field lengths upstream and to the sides, 4 downstream,
     with absorbing sponge layers; flat airframes are sized by their mean chord) and runs a 3D lattice-Boltzmann large-eddy simulation:
@@ -297,7 +357,14 @@ curl "$HOST/api/jobs/$JOB" -H "Authorization: Bearer $KEY"
 curl -o optimized.stl "$HOST/api/jobs/$JOB/files/optimized.stl" -H "Authorization: Bearer $KEY"</pre>
   <p>Other files per job: <code>result.json</code> (polars for every angle and speed), <code>history.json</code>,
     <code>fields_baseline_N.json</code> / <code>fields_best_N.json</code> (flow fields per simulated angle) and
-    <code>baseline_body.stl</code> / <code>best_body.stl</code>.</p>
+    <code>baseline_body.stl</code> / <code>best_body.stl</code>. Exports: <code>/api/jobs/$JOB/export/pdf</code> (report),
+    <code>/export/step</code>, <code>/export/vtk</code> (zip) and <code>/export/fusion-script</code>; <code>POST /api/jobs/$JOB/mission</code> recomputes the
+    mission with <code>{"battery_wh", "usable", "efficiency", "motor_w", "mass_kg"}</code>; <code>POST /api/projects/$PROJECT/estimate</code> takes a job
+    body and returns how long it would take; analyses accept <code>"grid_study": true</code> and <code>"refine": true</code>.</p>
+  <p><b>Python client and command line.</b> <a href="/static/clients/aerosculpt_client.py" download>aerosculpt_client.py</a> is one file with no
+    dependencies: <code>python aerosculpt_client.py upload wing.step --units mm</code>, <code>analyze PROJECT --grid-study --wait</code>,
+    <code>optimize PROJECT --effort balanced --wait</code>, <code>download JOB pdf report.pdf</code>, <code>compare JOB_A JOB_B</code> and
+    <code>sweep PROJECT --param wing_span=2.0,2.4,2.8</code> for batch studies. Set <code>AEROSCULPT_URL</code> and <code>AEROSCULPT_KEY</code>.</p>
 </main>
 <script type="module" src="/static/js/site.js"></script>
 </body>

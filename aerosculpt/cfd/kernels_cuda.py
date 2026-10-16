@@ -114,6 +114,27 @@ def stream_collide(f, fn, flags, bidx, qtab, wall, tau_x, tau_y, tau_z, feq_ff, 
         fn[17, x, y, z] = feq_ff[17]
         fn[18, x, y, z] = feq_ff[18]
         return
+    if t == 4:
+        fn[0, x, y, z] = f[0, x, y, z]
+        fn[1, x, y, z] = f[1, x, y, z]
+        fn[2, x, y, z] = f[2, x, y, z]
+        fn[3, x, y, z] = f[3, x, y, z]
+        fn[4, x, y, z] = f[4, x, y, z]
+        fn[5, x, y, z] = f[5, x, y, z]
+        fn[6, x, y, z] = f[6, x, y, z]
+        fn[7, x, y, z] = f[7, x, y, z]
+        fn[8, x, y, z] = f[8, x, y, z]
+        fn[9, x, y, z] = f[9, x, y, z]
+        fn[10, x, y, z] = f[10, x, y, z]
+        fn[11, x, y, z] = f[11, x, y, z]
+        fn[12, x, y, z] = f[12, x, y, z]
+        fn[13, x, y, z] = f[13, x, y, z]
+        fn[14, x, y, z] = f[14, x, y, z]
+        fn[15, x, y, z] = f[15, x, y, z]
+        fn[16, x, y, z] = f[16, x, y, z]
+        fn[17, x, y, z] = f[17, x, y, z]
+        fn[18, x, y, z] = f[18, x, y, z]
+        return
     xm = x - 1 if x > 0 else nx - 1
     xp = x + 1 if x < nx - 1 else 0
     ym = y - 1 if y > 0 else ny - 1

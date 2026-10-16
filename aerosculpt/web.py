@@ -1297,6 +1297,8 @@ def _build_spec(data, project, plan):
             "zones": [z for z in st.get("zones", []) if z["type"] != "material"]}
     if kind == "analyze" and data.get("grid_study"):
         spec["grid_study"] = True
+    if kind == "analyze" and data.get("refine") and tunnel != "supersonic":
+        spec["refine"] = True
     if (st.get("ground") or {}).get("enabled") and not (st.get("template") or {}).get("id") in ("uav", "wing"):
         spec["ground"] = dict(st["ground"])
         spec["envelope"]["aoas"], spec["envelope"]["yaw"] = [0.0], 0.0      # level on the road
@@ -1716,6 +1718,32 @@ async def job_fusion(request: Request):
     return JSONResponse(res)
 
 
+async def project_wheels(request: Request):
+    """Wheel boxes found on the model (a proposal to check), in the file's own axes and units."""
+    from .geometry.wheels import detect_wheels
+    from .optimize.runner import ModelFrame, load_model
+    data = await body_json(request)
+    with db() as con:
+        user = current_user(request, con)
+        p = _get_project(con, user, request.path_params["pid"], "write")
+    st = _clean_settings({k: data[k] for k in ("units", "unit_scale", "forward", "up") if k in data},
+                         json.loads(p["settings"] or "{}"))
+
+    def find():
+        fr = ModelFrame(load_model(project_dir(p["id"]) / p["filename"], p["filename"]), st.get("units", "m"),
+                        st.get("forward", "-x"), st.get("up", "+z"), st.get("unit_scale"))
+        A = np.abs(fr.R0)
+        out = []
+        for k, w in enumerate(detect_wheels(fr.body)):
+            c = ((np.asarray(w["center"]) + fr.center) @ fr.R0) / fr.scale
+            size = (A.T @ np.asarray(w["size"])) / fr.scale
+            out.append({"id": uuid.uuid4().hex[:8], "type": "wheel", "shape": "box", "rotation": [0, 0, 0],
+                        "center": [round(float(v), 6) for v in c], "size": [round(float(v), 6) for v in size],
+                        "name": f"Wheel {k + 1}"})
+        return out
+    return JSONResponse({"zones": await run_in_threadpool(find)})
+
+
 async def project_estimate(request: Request):
     """How long a job would take, from the grids it will actually use (no job is created)."""
     from .estimate import estimate
@@ -1724,9 +1752,7 @@ async def project_estimate(request: Request):
         user = current_user(request, con)
         project = _get_project(con, user, request.path_params["pid"])
         plan = plan_for(user)
-    spec = _build_spec(data, project, plan)
-    st = _clean_settings({k: data[k] for k in ("units", "unit_scale", "forward", "up") if k in data},
-                         json.loads(project["settings"] or "{}"))
+    spec, st, _ = _build_spec(data, project, plan)
     out = await run_in_threadpool(estimate, spec, json.loads(project["metrics"] or "{}"), st)
     return JSONResponse(out)
 
@@ -2214,6 +2240,7 @@ routes = [
     Route("/api/jobs/{jid}/fusion", job_fusion, methods=["POST"]),
     Route("/api/jobs/{jid}/mission", job_mission, methods=["POST"]),
     Route("/api/projects/{pid}/estimate", project_estimate, methods=["POST"]),
+    Route("/api/projects/{pid}/wheels", project_wheels, methods=["POST"]),
     Route("/api/projects/{pid}/share", project_share, methods=["POST"]),
     Route("/api/teams", teams_list, methods=["GET", "POST"]),
     Route("/api/teams/{tid:int}/members", team_members, methods=["POST", "PATCH", "DELETE"]),

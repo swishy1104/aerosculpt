@@ -133,6 +133,12 @@ class GpuTunnel(Tunnel):
         self.solid_cells = int((self.flags == SOLID).sum())
         return self.solid_cells
 
+    def nest_from(self, mean, outer):
+        super().nest_from(mean, outer)
+        self.d_f = self.cuda.to_device(self.f)
+        self.d_fn = self.cuda.to_device(self.fn)
+        self.d_flags = self.cuda.to_device(self.flags)
+
     def set_forcing(self, idx=None, F=None):
         super().set_forcing(idx, F)
         if self.force_idx is None:

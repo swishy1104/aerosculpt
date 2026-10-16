@@ -18,7 +18,7 @@ import numpy as np
 
 from .analysis import FIDELITY, Conditions, Evaluator, Fidelity, analyze, cf_flat_plate, isa
 from ..geometry.mesh import metrics, projected_area
-from ..geometry.samples import box, icosphere, streamlined_pod, wing
+from ..geometry.samples import ahmed_body, box, icosphere, streamlined_pod, wing
 
 OUT = Path(__file__).with_name("validation_results.json")
 NU = isa(0.0)["nu"]
@@ -88,6 +88,15 @@ def cases():
         yield {"id": f"pod-{f}", "body": "Streamlined body, fineness 5", "mesh": pod, "re": 2.0e6, "fid": FIDELITY[f],
                "ref": (lo + hi) / 2, "ref_band": [lo, hi],
                "ref_source": "Hoerner form factor on wetted area, transitional–turbulent friction"}
+    # Car: the Ahmed body (Ahmed, Ramm & Faltin 1984, SAE 840300), 60 m/s, 50 mm above a road,
+    # wall model on; plain and with the nested zoom grid around the body
+    for slant, ref in ((25, 0.285), (35, 0.257)):
+        m = ahmed_body(slant)
+        for refine in (False, True):
+            yield {"id": f"ahmed{slant}-standard{'-zoom' if refine else ''}", "body": f"Ahmed body, {slant}° slant, on a road"
+                   + (" (zoom grid)" if refine else ""), "mesh": m, "re": 4.29e6, "fid": FIDELITY["standard"], "ref": ref,
+                   "ground": {"z": float(m.bbox()[0][2] - 0.05), "wheels": []}, "refine": refine,
+                   "ref_source": "Ahmed, Ramm & Faltin (1984), SAE 840300: drag at Re 4.29e6"}
     # Lift: rectangular NACA 0012 wing, aspect ratio 6, slope between 0 and 6 degrees.
     ar = 6.0
     w = wing(ar * 0.2, 0.2, 1.0, 0.0, "0012", n_span=30, n_af=60)
@@ -324,7 +333,7 @@ def run_suite(verbose=False, only=None):
             r = {**run, "setup": setup, "cd": run["cd_tunnel"]}
             quantity = "CLα /rad"
         else:
-            r = analyze(m, Conditions(speed=speed), c["fid"])
+            r = analyze(m, Conditions(speed=speed), c["fid"], ground=c.get("ground"), refine=c.get("refine", False))
             val = r["cd"]
             quantity = None
         cd = r["cd"]
@@ -337,6 +346,7 @@ def run_suite(verbose=False, only=None):
             "cells_across": round(min(v for v in r["setup"]["body_cells"] if v > 0), 1),
             "regime": r["setup"]["regime"], "cd": cd, "cd_tunnel": r["cd_tunnel"], "cd_pressure": r["cd_pressure"],
             "cd_friction": r.get("cd_friction"), "cd_std": r["cd_std"], "converged": r["converged"],
+            "wall_model": bool(r.get("wall_model")), "zoom": bool(r.get("zoom")), "ground": c.get("ground") is not None,
             "ref": c["ref"], "ref_band": band, "ref_source": c["ref_source"], "error": err, "status": status,
             "seconds": time.time() - t,
         }

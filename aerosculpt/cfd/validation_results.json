@@ -1,8 +1,8 @@
 {
- "generated_at": 1791753132.4975653,
+ "generated_at": 1792124036.872947,
  "machine": "Intel64 Family 6 Model 165 Stepping 2, GenuineIntel",
  "python": "3.13.9",
- "total_seconds": 130.23199796676636,
+ "total_seconds": 537.8194575309753,
  "cases": [
   {
    "id": "sphere-re100",
@@ -10,23 +10,26 @@
    "body": "Sphere",
    "re": 100,
    "quantity": null,
-   "value": 1.0977870948979964,
+   "value": 1.099683072532509,
    "fidelity": "validation-400k",
    "cells": 421888,
    "cells_across": 15.7,
    "regime": "direct",
-   "cd": 1.0977870948979964,
-   "cd_tunnel": 1.0977870948979964,
-   "cd_pressure": 0.4835127727022235,
-   "cd_friction": 0.6142743221957729,
-   "cd_std": 0.00436316908101154,
+   "cd": 1.099683072532509,
+   "cd_tunnel": 1.099683072532509,
+   "cd_pressure": 0.48338414008324054,
+   "cd_friction": 0.6162989324492685,
+   "cd_std": 0.0058612497854646,
    "converged": true,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 1.0917310910948732,
    "ref_band": null,
    "ref_source": "Schiller\u2013Naumann correlation (\u00b15% vs. experiment)",
-   "error": 0.005547157035758483,
+   "error": 0.007283827952230435,
    "status": "pass",
-   "seconds": 5.524911642074585
+   "seconds": 7.184999704360962
   },
   {
    "id": "sphere-re200",
@@ -34,23 +37,26 @@
    "body": "Sphere",
    "re": 200,
    "quantity": null,
-   "value": 0.8467634486200636,
+   "value": 0.8445634233480307,
    "fidelity": "validation-400k",
    "cells": 421888,
    "cells_across": 15.7,
    "regime": "direct",
-   "cd": 0.8467634486200636,
-   "cd_tunnel": 0.8467634486200636,
-   "cd_pressure": 0.455578845243224,
-   "cd_friction": 0.3911846033768396,
-   "cd_std": 0.008693254759867744,
+   "cd": 0.8445634233480307,
+   "cd_tunnel": 0.8445634233480307,
+   "cd_pressure": 0.4514769571969324,
+   "cd_friction": 0.39308646615109827,
+   "cd_std": 0.013334539173615968,
    "converged": true,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 0.8056146866904639,
    "ref_band": null,
    "ref_source": "Schiller\u2013Naumann correlation",
-   "error": 0.0510774724063714,
+   "error": 0.04834660700833504,
    "status": "pass",
-   "seconds": 3.2635340690612793
+   "seconds": 4.178619146347046
   },
   {
    "id": "sphere-re300",
@@ -58,23 +64,26 @@
    "body": "Sphere",
    "re": 300,
    "quantity": null,
-   "value": 0.7327679371583483,
+   "value": 0.7325389467519489,
    "fidelity": "validation-400k",
    "cells": 421888,
    "cells_across": 15.7,
    "regime": "direct",
-   "cd": 0.7327679371583483,
-   "cd_tunnel": 0.7327679371583483,
-   "cd_pressure": 0.44307513300742707,
-   "cd_friction": 0.28969280415092125,
-   "cd_std": 0.004914942886366573,
+   "cd": 0.7325389467519489,
+   "cd_tunnel": 0.7325389467519489,
+   "cd_pressure": 0.43464983211314534,
+   "cd_friction": 0.2978891146388035,
+   "cd_std": 0.016572100276761932,
    "converged": true,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 0.6838979398366829,
    "ref_band": null,
    "ref_source": "Schiller\u2013Naumann correlation",
-   "error": 0.07145802681221079,
+   "error": 0.07112319555587723,
    "status": "pass",
-   "seconds": 3.8506617546081543
+   "seconds": 6.330192565917969
   },
   {
    "id": "sphere-re300-fine",
@@ -82,23 +91,26 @@
    "body": "Sphere (refined grid)",
    "re": 300,
    "quantity": null,
-   "value": 0.6895556075978967,
+   "value": 0.6892226832874924,
    "fidelity": "validation-1.6M",
    "cells": 1662763,
    "cells_across": 24.9,
    "regime": "direct",
-   "cd": 0.6895556075978967,
-   "cd_tunnel": 0.6895556075978967,
-   "cd_pressure": 0.42318974220261124,
-   "cd_friction": 0.26636586539528545,
-   "cd_std": 0.004559944562170138,
+   "cd": 0.6892226832874924,
+   "cd_tunnel": 0.6892226832874924,
+   "cd_pressure": 0.4146364986150115,
+   "cd_friction": 0.27458618467248086,
+   "cd_std": 0.015741481391906148,
    "converged": true,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 0.6838979398366829,
    "ref_band": null,
    "ref_source": "Schiller\u2013Naumann correlation",
-   "error": 0.008272678468025305,
+   "error": 0.007785874383655889,
    "status": "pass",
-   "seconds": 20.82233953475952
+   "seconds": 36.67391872406006
   },
   {
    "id": "sphere-re1e5-draft",
@@ -106,23 +118,26 @@
    "body": "Sphere, subcritical",
    "re": 100000.0,
    "quantity": null,
-   "value": 0.45810329447937187,
+   "value": 0.46978572359289517,
    "fidelity": "draft",
    "cells": 316216,
    "cells_across": 14.2,
    "regime": "hybrid",
-   "cd": 0.45810329447937187,
-   "cd_tunnel": 0.5747847301430649,
-   "cd_pressure": 0.44276183175857164,
-   "cd_friction": 0.015341462720800246,
-   "cd_std": 0.025946067272647557,
-   "converged": true,
+   "cd": 0.46978572359289517,
+   "cd_tunnel": 0.6297132800105424,
+   "cd_pressure": 0.454033345752521,
+   "cd_friction": 0.015752377840374157,
+   "cd_std": 0.029893515696395707,
+   "converged": false,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 0.47,
    "ref_band": null,
    "ref_source": "Standard sphere drag curve, subcritical plateau (Achenbach 1972)",
-   "error": -0.02531213940559171,
+   "error": -0.00045590724915916506,
    "status": "pass",
-   "seconds": 2.8143420219421387
+   "seconds": 6.493642330169678
   },
   {
    "id": "sphere-re1e5-standard",
@@ -130,23 +145,26 @@
    "body": "Sphere, subcritical",
    "re": 100000.0,
    "quantity": null,
-   "value": 0.4527231325023872,
+   "value": 0.4590376875392687,
    "fidelity": "standard",
    "cells": 1059660,
    "cells_across": 21.3,
    "regime": "hybrid",
-   "cd": 0.4527231325023872,
-   "cd_tunnel": 0.513614457762757,
-   "cd_pressure": 0.4369354790284469,
-   "cd_friction": 0.015787653473940313,
-   "cd_std": 0.00707667832771886,
-   "converged": true,
+   "cd": 0.4590376875392687,
+   "cd_tunnel": 0.5494765888835705,
+   "cd_pressure": 0.4427665868060481,
+   "cd_friction": 0.016271100733220616,
+   "cd_std": 0.019866820868769758,
+   "converged": false,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 0.47,
    "ref_band": null,
    "ref_source": "Standard sphere drag curve, subcritical plateau (Achenbach 1972)",
-   "error": -0.036759292548112256,
+   "error": -0.02332406906538566,
    "status": "pass",
-   "seconds": 10.635221481323242
+   "seconds": 29.729199647903442
   },
   {
    "id": "cube-draft",
@@ -154,23 +172,26 @@
    "body": "Cube, face-on",
    "re": 680000.0,
    "quantity": null,
-   "value": 1.114139530960985,
+   "value": 0.9435559035759175,
    "fidelity": "draft",
    "cells": 316216,
    "cells_across": 14.2,
    "regime": "hybrid",
-   "cd": 1.114139530960985,
-   "cd_tunnel": 1.0033428900869708,
-   "cd_pressure": 1.1011874261993926,
-   "cd_friction": 0.012952104761592316,
-   "cd_std": 0.019794454988092663,
+   "cd": 0.9435559035759175,
+   "cd_tunnel": 0.6684361873031172,
+   "cd_pressure": 0.9307472968794431,
+   "cd_friction": 0.012808606696474363,
+   "cd_std": 0.007251484563852329,
    "converged": true,
+   "wall_model": true,
+   "zoom": false,
+   "ground": false,
    "ref": 1.05,
    "ref_band": null,
    "ref_source": "Hoerner, Fluid-Dynamic Drag (1965): Re-independent sharp-edged cube",
-   "error": 0.06108526758189038,
-   "status": "pass",
-   "seconds": 2.23067569732666
+   "error": -0.1013753299276977,
+   "status": "warn",
+   "seconds": 2.357609272003174
   },
   {
    "id": "cube-standard",
@@ -178,23 +199,26 @@
    "body": "Cube, face-on",
    "re": 680000.0,
    "quantity": null,
-   "value": 1.165991616872635,
+   "value": 1.1833626599251381,
    "fidelity": "standard",
    "cells": 1059660,
    "cells_across": 21.3,
    "regime": "hybrid",
-   "cd": 1.165991616872635,
-   "cd_tunnel": 1.0958778911478577,
-   "cd_pressure": 1.1511642977022296,
-   "cd_friction": 0.014827319170405404,
-   "cd_std": 0.024062760099558576,
-   "converged": true,
+   "cd": 1.1833626599251381,
+   "cd_tunnel": 1.080812506004669,
+   "cd_pressure": 1.16972524544212,
+   "cd_friction": 0.013637414483018025,
+   "cd_std": 0.05682162393720127,
+   "converged": false,
+   "wall_model": true,
+   "zoom": false,
+   "ground": false,
    "ref": 1.05,
    "ref_band": null,
    "ref_source": "Hoerner, Fluid-Dynamic Drag (1965): Re-independent sharp-edged cube",
-   "error": 0.1104682065453666,
+   "error": 0.12701205707156007,
    "status": "warn",
-   "seconds": 8.822906255722046
+   "seconds": 31.142295360565186
   },
   {
    "id": "pod-draft",
@@ -202,26 +226,29 @@
    "body": "Streamlined body, fineness 5",
    "re": 2000000.0,
    "quantity": null,
-   "value": 0.23919832406990948,
+   "value": 0.16799063940750322,
    "fidelity": "draft",
    "cells": 330096,
    "cells_across": 11.0,
    "regime": "hybrid",
-   "cd": 0.23919832406990948,
-   "cd_tunnel": 0.6935249235322364,
-   "cd_pressure": 0.19040484141182684,
-   "cd_friction": 0.04879348265808266,
-   "cd_std": 0.006685104897513905,
+   "cd": 0.16799063940750322,
+   "cd_tunnel": 0.3357841069244205,
+   "cd_pressure": 0.11555521536875797,
+   "cd_friction": 0.05243542403874526,
+   "cd_std": 0.008115063546414043,
    "converged": true,
+   "wall_model": true,
+   "zoom": false,
+   "ground": false,
    "ref": 0.06689861341188634,
    "ref_band": [
     0.05881057328210156,
     0.07498665354167112
    ],
    "ref_source": "Hoerner form factor on wetted area, transitional\u2013turbulent friction",
-   "error": 2.5755348559647344,
+   "error": 1.5111228893969149,
    "status": "fail",
-   "seconds": 2.9527063369750977
+   "seconds": 5.504429578781128
   },
   {
    "id": "pod-standard",
@@ -229,26 +256,29 @@
    "body": "Streamlined body, fineness 5",
    "re": 2000000.0,
    "quantity": null,
-   "value": 0.2310327081062985,
+   "value": 0.16528225740329716,
    "fidelity": "standard",
    "cells": 1041448,
    "cells_across": 16.5,
    "regime": "hybrid",
-   "cd": 0.2310327081062985,
-   "cd_tunnel": 0.6178992341018091,
-   "cd_pressure": 0.18164403329953827,
-   "cd_friction": 0.04938867480676022,
-   "cd_std": 0.0193167548343088,
+   "cd": 0.16528225740329716,
+   "cd_tunnel": 0.3206209656147854,
+   "cd_pressure": 0.11271100113038979,
+   "cd_friction": 0.05257125627290736,
+   "cd_std": 0.008786259225763678,
    "converged": true,
+   "wall_model": true,
+   "zoom": false,
+   "ground": false,
    "ref": 0.06689861341188634,
    "ref_band": [
     0.05881057328210156,
     0.07498665354167112
    ],
    "ref_source": "Hoerner form factor on wetted area, transitional\u2013turbulent friction",
-   "error": 2.4534752863091374,
+   "error": 1.4706380143587598,
    "status": "fail",
-   "seconds": 13.296627521514893
+   "seconds": 28.20590829849243
   },
   {
    "id": "pod-high",
@@ -256,26 +286,137 @@
    "body": "Streamlined body, fineness 5",
    "re": 2000000.0,
    "quantity": null,
-   "value": 0.21992967406176706,
+   "value": 0.1754011595514057,
    "fidelity": "high",
    "cells": 2600234,
    "cells_across": 22.3,
    "regime": "hybrid",
-   "cd": 0.21992967406176706,
-   "cd_tunnel": 0.49152996139111943,
-   "cd_pressure": 0.17031313497210382,
-   "cd_friction": 0.049616539089663236,
-   "cd_std": 0.011887039110196094,
+   "cd": 0.1754011595514057,
+   "cd_tunnel": 0.300952825954688,
+   "cd_pressure": 0.12356613790448148,
+   "cd_friction": 0.05183502164692421,
+   "cd_std": 0.006719104799892452,
    "converged": true,
+   "wall_model": true,
+   "zoom": false,
+   "ground": false,
    "ref": 0.06689861341188634,
    "ref_band": [
     0.05881057328210156,
     0.07498665354167112
    ],
    "ref_source": "Hoerner form factor on wetted area, transitional\u2013turbulent friction",
-   "error": 2.2875072119609974,
+   "error": 1.621895292081509,
    "status": "fail",
-   "seconds": 34.97689938545227
+   "seconds": 54.51813817024231
+  },
+  {
+   "id": "ahmed25-standard",
+   "group": "general",
+   "body": "Ahmed body, 25\u00b0 slant, on a road",
+   "re": 4290000.0,
+   "quantity": null,
+   "value": 0.5255479316406222,
+   "fidelity": "standard",
+   "cells": 1043200,
+   "cells_across": 14.5,
+   "regime": "hybrid",
+   "cd": 0.5255479316406222,
+   "cd_tunnel": 0.6856273653874685,
+   "cd_pressure": 0.4818035980703015,
+   "cd_friction": 0.043744333570320655,
+   "cd_std": 0.0922695173871758,
+   "converged": false,
+   "wall_model": true,
+   "zoom": false,
+   "ground": true,
+   "ref": 0.285,
+   "ref_band": null,
+   "ref_source": "Ahmed, Ramm & Faltin (1984), SAE 840300: drag at Re 4.29e6",
+   "error": 0.8440278303179728,
+   "status": "fail",
+   "seconds": 37.46456837654114
+  },
+  {
+   "id": "ahmed25-standard-zoom",
+   "group": "general",
+   "body": "Ahmed body, 25\u00b0 slant, on a road (zoom grid)",
+   "re": 4290000.0,
+   "quantity": null,
+   "value": 0.24564674351673016,
+   "fidelity": "standard",
+   "cells": 1043200,
+   "cells_across": 14.5,
+   "regime": "hybrid",
+   "cd": 0.24564674351673016,
+   "cd_tunnel": 0.3046632371787606,
+   "cd_pressure": 0.20436124122106702,
+   "cd_friction": 0.041285502295663135,
+   "cd_std": 0.026530017239295198,
+   "converged": false,
+   "wall_model": true,
+   "zoom": true,
+   "ground": true,
+   "ref": 0.285,
+   "ref_band": null,
+   "ref_source": "Ahmed, Ramm & Faltin (1984), SAE 840300: drag at Re 4.29e6",
+   "error": -0.13808160169568356,
+   "status": "warn",
+   "seconds": 112.65547347068787
+  },
+  {
+   "id": "ahmed35-standard",
+   "group": "general",
+   "body": "Ahmed body, 35\u00b0 slant, on a road",
+   "re": 4290000.0,
+   "quantity": null,
+   "value": 0.5375255211051059,
+   "fidelity": "standard",
+   "cells": 1043200,
+   "cells_across": 14.5,
+   "regime": "hybrid",
+   "cd": 0.5375255211051059,
+   "cd_tunnel": 0.7526073815705493,
+   "cd_pressure": 0.49379075723394145,
+   "cd_friction": 0.043734763871164435,
+   "cd_std": 0.08622400213817813,
+   "converged": false,
+   "wall_model": true,
+   "zoom": false,
+   "ground": true,
+   "ref": 0.257,
+   "ref_band": null,
+   "ref_source": "Ahmed, Ramm & Faltin (1984), SAE 840300: drag at Re 4.29e6",
+   "error": 1.091538992626871,
+   "status": "fail",
+   "seconds": 36.85561275482178
+  },
+  {
+   "id": "ahmed35-standard-zoom",
+   "group": "general",
+   "body": "Ahmed body, 35\u00b0 slant, on a road (zoom grid)",
+   "re": 4290000.0,
+   "quantity": null,
+   "value": 0.2720157040706773,
+   "fidelity": "standard",
+   "cells": 1043200,
+   "cells_across": 14.5,
+   "regime": "hybrid",
+   "cd": 0.2720157040706773,
+   "cd_tunnel": 0.3253520503197345,
+   "cd_pressure": 0.230421548524208,
+   "cd_friction": 0.041594155546469364,
+   "cd_std": 0.02489135858781852,
+   "converged": false,
+   "wall_model": true,
+   "zoom": true,
+   "ground": true,
+   "ref": 0.257,
+   "ref_band": null,
+   "ref_source": "Ahmed, Ramm & Faltin (1984), SAE 840300: drag at Re 4.29e6",
+   "error": 0.058426864088238585,
+   "status": "pass",
+   "seconds": 112.09079766273499
   },
   {
    "id": "wing-ar6-draft",
@@ -283,26 +424,29 @@
    "body": "Rectangular wing, NACA 0012, AR 6",
    "re": 300000.0,
    "quantity": "CL\u03b1 /rad",
-   "value": 2.158636616136174,
+   "value": 2.278606111814052,
    "fidelity": "draft",
    "cells": 320112,
    "cells_across": 1.8,
    "regime": "hybrid",
-   "cd": 0.2719687889296471,
-   "cd_tunnel": 0.2719687889296471,
-   "cd_pressure": 0.04291452380535663,
+   "cd": 0.27285568917261804,
+   "cd_tunnel": 0.27285568917261804,
+   "cd_pressure": 0.042880144477959466,
    "cd_friction": null,
-   "cd_std": 0.0026042640244735996,
+   "cd_std": 0.0031628247735009667,
    "converged": true,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 4.368028974931909,
    "ref_band": [
     4.207394208392947,
     4.528663741470871
    ],
    "ref_source": "Lifting-line (Helmbold/DATCOM) lift slope, 2D slope 0.9\u20131.0 \u00d7 2\u03c0",
-   "error": -0.5058099136877122,
+   "error": -0.47834455199565795,
    "status": "fail",
-   "seconds": 4.376252889633179
+   "seconds": 4.866457462310791
   },
   {
    "id": "wing-ar6-standard",
@@ -310,26 +454,29 @@
    "body": "Rectangular wing, NACA 0012, AR 6",
    "re": 300000.0,
    "quantity": "CL\u03b1 /rad",
-   "value": 2.362881534719413,
+   "value": 2.4257103333474466,
    "fidelity": "standard",
    "cells": 1055355,
    "cells_across": 2.7,
    "regime": "hybrid",
-   "cd": 0.15614055597553186,
-   "cd_tunnel": 0.15614055597553186,
-   "cd_pressure": 0.0568854191488762,
+   "cd": 0.15587582502865255,
+   "cd_tunnel": 0.15587582502865255,
+   "cd_pressure": 0.05646872531623568,
    "cd_friction": null,
-   "cd_std": 0.00046522402419283597,
+   "cd_std": 0.0008848511459682756,
    "converged": true,
+   "wall_model": false,
+   "zoom": false,
+   "ground": false,
    "ref": 4.368028974931909,
    "ref_band": [
     4.207394208392947,
     4.528663741470871
    ],
    "ref_source": "Lifting-line (Helmbold/DATCOM) lift slope, 2D slope 0.9\u20131.0 \u00d7 2\u03c0",
-   "error": -0.45905085605430385,
+   "error": -0.44466706899872166,
    "status": "fail",
-   "seconds": 15.909544944763184
+   "seconds": 20.33970594406128
   },
   {
    "id": "hs-sphere-m4",
@@ -348,7 +495,7 @@
    "ref_source": "Free-flight sphere drag, hypersonic plateau \u2248 0.92 (Bailey & Hiatt 1972)",
    "error": 0.04466129174374131,
    "status": "pass",
-   "seconds": 0.10007224584880628
+   "seconds": 0.124854702698557
   },
   {
    "id": "hs-sphere-m6",
@@ -367,7 +514,7 @@
    "ref_source": "Free-flight sphere drag, hypersonic plateau \u2248 0.92 (Bailey & Hiatt 1972)",
    "error": 0.020946863724771,
    "status": "pass",
-   "seconds": 0.10007662522165399
+   "seconds": 0.12485969694037187
   },
   {
    "id": "hs-sphere-m10",
@@ -386,7 +533,7 @@
    "ref_source": "Free-flight sphere drag, hypersonic plateau \u2248 0.92 (Bailey & Hiatt 1972)",
    "error": 0.008894072163045337,
    "status": "pass",
-   "seconds": 0.10007788005628084
+   "seconds": 0.1248619556427002
   },
   {
    "id": "hs-cone10-m2",
@@ -402,7 +549,7 @@
    "ref_source": "Taylor\u2013Maccoll exact conical flow (checks the surface integration)",
    "error": -0.001567361182094797,
    "status": "pass",
-   "seconds": 0.10007875844051964
+   "seconds": 0.12486363712110017
   },
   {
    "id": "hs-cone10-m4",
@@ -418,7 +565,7 @@
    "ref_source": "Taylor\u2013Maccoll exact conical flow (checks the surface integration)",
    "error": -0.001607018117142324,
    "status": "pass",
-   "seconds": 0.10007958663137335
+   "seconds": 0.12486531859950016
   },
   {
    "id": "hs-cone10-m6",
@@ -434,7 +581,7 @@
    "ref_source": "Taylor\u2013Maccoll exact conical flow (checks the surface integration)",
    "error": -0.0016553447094380055,
    "status": "pass",
-   "seconds": 0.100080364628842
+   "seconds": 0.12486697498120759
   },
   {
    "id": "hs-cone10-cna-m2",
@@ -450,7 +597,7 @@
    "ref_source": "Slender-body theory: CN\u03b1 = 2 per radian on base area",
    "error": 0.3775020633007915,
    "status": "fail",
-   "seconds": 0.10008110498127185
+   "seconds": 0.12486854352449116
   },
   {
    "id": "hs-cone10-cna-m4",
@@ -466,7 +613,7 @@
    "ref_source": "Slender-body theory: CN\u03b1 = 2 per radian on base area",
    "error": 0.10335053701285712,
    "status": "warn",
-   "seconds": 0.10008187043039422
+   "seconds": 0.12487018735785234
   },
   {
    "id": "hs-cone10-cna-m6",
@@ -482,7 +629,7 @@
    "ref_source": "Slender-body theory: CN\u03b1 = 2 per radian on base area",
    "error": 0.04590163585641838,
    "status": "pass",
-   "seconds": 0.10008261078282406
+   "seconds": 0.1248717935461747
   },
   {
    "id": "hs-ogive3-m1.5",
@@ -498,7 +645,7 @@
    "ref_source": "Bonney (1950) ogive wave-drag data as fitted in Fleeman, Tactical Missile Design (2006)",
    "error": -0.06569260648559475,
    "status": "pass",
-   "seconds": 0.10008336368360017
+   "seconds": 0.1248733871861508
   },
   {
    "id": "hs-ogive3-m2",
@@ -514,7 +661,7 @@
    "ref_source": "Bonney (1950) ogive wave-drag data as fitted in Fleeman, Tactical Missile Design (2006)",
    "error": 0.023578999181710057,
    "status": "pass",
-   "seconds": 0.10008411658437628
+   "seconds": 0.12487503101951197
   },
   {
    "id": "hs-ogive3-m3",
@@ -530,7 +677,7 @@
    "ref_source": "Bonney (1950) ogive wave-drag data as fitted in Fleeman, Tactical Missile Design (2006)",
    "error": 0.06867524798698017,
    "status": "pass",
-   "seconds": 0.10008485693680613
+   "seconds": 0.12487664975618061
   },
   {
    "id": "hs-ogive3-m4",
@@ -546,7 +693,7 @@
    "ref_source": "Bonney (1950) ogive wave-drag data as fitted in Fleeman, Tactical Missile Design (2006)",
    "error": 0.060872503884352495,
    "status": "pass",
-   "seconds": 0.10008560983758223
+   "seconds": 0.12487819320277165
   },
   {
    "id": "hs-plate-m2",
@@ -562,7 +709,7 @@
    "ref_source": "Ackeret linear supersonic theory, 4/\u221a(M\u00b2\u22121)",
    "error": -0.009266757056502567,
    "status": "pass",
-   "seconds": 0.10008633764166582
+   "seconds": 0.1248797617460552
   },
   {
    "id": "hs-plate-m3",
@@ -578,7 +725,7 @@
    "ref_source": "Ackeret linear supersonic theory, 4/\u221a(M\u00b2\u22121)",
    "error": -0.014412015087065785,
    "status": "pass",
-   "seconds": 0.10008750463786878
+   "seconds": 0.12488140557941638
   },
   {
    "id": "hs-plate-m5",
@@ -594,7 +741,7 @@
    "ref_source": "Ackeret linear supersonic theory, 4/\u221a(M\u00b2\u22121)",
    "error": -0.020772311975718424,
    "status": "pass",
-   "seconds": 0.10008850850557026
+   "seconds": 0.12488297412269994
   },
   {
    "id": "hs-stag-m6",
@@ -610,7 +757,7 @@
    "ref_source": "Sutton\u2013Graves correlation (cold wall 300 K)",
    "error": 0.062984752992124,
    "status": "pass",
-   "seconds": 0.1000892865030389
+   "seconds": 0.12488451756929096
   },
   {
    "id": "hs-stag-m8",
@@ -626,7 +773,7 @@
    "ref_source": "Sutton\u2013Graves correlation (cold wall 300 K)",
    "error": 0.0491505520906376,
    "status": "pass",
-   "seconds": 0.10009006450050756
+   "seconds": 0.12488614885430586
   },
   {
    "id": "hs-stag-m10",
@@ -642,7 +789,7 @@
    "ref_source": "Sutton\u2013Graves correlation (cold wall 300 K)",
    "error": 0.052756944389692154,
    "status": "pass",
-   "seconds": 0.10009079230459113
+   "seconds": 0.1248877675909745
   },
   {
    "id": "wm-ellipse-e",
@@ -658,7 +805,7 @@
    "ref_source": "Prandtl: an elliptic loading has e = 1 exactly",
    "error": 0.00035353776855040486,
    "status": "pass",
-   "seconds": 0.03993609216478136
+   "seconds": 0.049757825003729925
   },
   {
    "id": "wm-circular-cla",
@@ -674,7 +821,7 @@
    "ref_source": "Kinner (1937) exact lifting-surface solution",
    "error": 0.017127113982299286,
    "status": "pass",
-   "seconds": 0.03994451628790961
+   "seconds": 0.04976616965399848
   },
   {
    "id": "wm-rect6-cla",
@@ -693,7 +840,7 @@
    "ref_source": "Lifting-line (Helmbold/DATCOM) lift slope, 2D slope 0.9\u20131.0 \u00d7 2\u03c0 (same reference as the CFD case)",
    "error": -0.020965765604282323,
    "status": "pass",
-   "seconds": 0.039947324328952365
+   "seconds": 0.049769586986965604
   },
   {
    "id": "wm-2412-alpha0",
@@ -709,7 +856,7 @@
    "ref_source": "Abbott & von Doenhoff, Theory of Wing Sections (1959): measured zero-lift angle about \u22122.1\u00b0",
    "error": -0.00624429872725321,
    "status": "pass",
-   "seconds": 0.03994928465949164
+   "seconds": 0.04977533552381727
   },
   {
    "id": "wm-0012-cl5",
@@ -725,7 +872,7 @@
    "ref_source": "Ladson (1988), NASA TM-4074",
    "error": 0.06422325615430119,
    "status": "pass",
-   "seconds": 0.03995105955335829
+   "seconds": 0.04977830251057943
   },
   {
    "id": "wm-0012-cl10",
@@ -741,7 +888,7 @@
    "ref_source": "Ladson (1988), NASA TM-4074",
    "error": 0.05831009563490857,
    "status": "pass",
-   "seconds": 0.03995267550150553
+   "seconds": 0.04978066020541721
   },
   {
    "id": "wm-0012-cd0",
@@ -757,7 +904,7 @@
    "ref_source": "Ladson (1988), NASA TM-4074",
    "error": -0.015355382784180147,
    "status": "pass",
-   "seconds": 0.03995426495869955
+   "seconds": 0.04978283246358236
   },
   {
    "id": "wm-0012-cd5",
@@ -773,7 +920,7 @@
    "ref_source": "Ladson (1988), NASA TM-4074",
    "error": 0.00716054116207509,
    "status": "pass",
-   "seconds": 0.03995590739780002
+   "seconds": 0.04978497823079427
   },
   {
    "id": "wm-0012-cd10",
@@ -789,7 +936,7 @@
    "ref_source": "Ladson (1988), NASA TM-4074",
    "error": -0.06225228126955343,
    "status": "pass",
-   "seconds": 0.03995749685499403
+   "seconds": 0.04978715048895942
   },
   {
    "id": "rc-apce_10x7_6015-ct",
@@ -805,7 +952,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 1 (apce_10x7_pg0816_6015.txt) (family fitted on this propeller)",
    "error": -0.07875535920715761,
    "status": "pass",
-   "seconds": 0.7000222206115723
+   "seconds": 0.9851717948913574
   },
   {
    "id": "rc-apce_10x7_6015-cp",
@@ -821,7 +968,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 1 (apce_10x7_pg0816_6015.txt) (family fitted on this propeller)",
    "error": -0.05717994017726387,
    "status": "pass",
-   "seconds": 0.7000281810760498
+   "seconds": 0.9851784706115723
   },
   {
    "id": "rc-apce_9x6_6015-ct",
@@ -837,7 +984,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 1 (apce_9x6_rd0992_6015.txt)",
    "error": -0.049860593088861635,
    "status": "pass",
-   "seconds": 0.457871675491333
+   "seconds": 0.750669002532959
   },
   {
    "id": "rc-apce_9x6_6015-cp",
@@ -853,7 +1000,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 1 (apce_9x6_rd0992_6015.txt)",
    "error": -0.029691522773761938,
    "status": "pass",
-   "seconds": 0.45787715911865234
+   "seconds": 0.7506780624389648
   },
   {
    "id": "rc-apce_11x10_4998-ct",
@@ -869,7 +1016,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 1 (apce_11x10_kt0464_4998.txt)",
    "error": -0.02467901578080004,
    "status": "pass",
-   "seconds": 0.7647039890289307
+   "seconds": 1.1379632949829102
   },
   {
    "id": "rc-apce_11x10_4998-cp",
@@ -885,7 +1032,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 1 (apce_11x10_kt0464_4998.txt)",
    "error": -0.00250701407960471,
    "status": "pass",
-   "seconds": 0.7647087574005127
+   "seconds": 1.1379694938659668
   },
   {
    "id": "rc-da4022_9x6.75_2b_5030-ct",
@@ -901,7 +1048,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 2 (da4022_9x6.75_0773rd_5030.txt) (family fitted on this propeller)",
    "error": -0.017388006385798408,
    "status": "pass",
-   "seconds": 0.4984703063964844
+   "seconds": 0.82277512550354
   },
   {
    "id": "rc-da4022_9x6.75_2b_5030-cp",
@@ -917,7 +1064,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 2 (da4022_9x6.75_0773rd_5030.txt) (family fitted on this propeller)",
    "error": 0.008487727048349396,
    "status": "pass",
-   "seconds": 0.4984743595123291
+   "seconds": 0.8227806091308594
   },
   {
    "id": "rc-da4022_9x6.75_3b_5037-ct",
@@ -933,7 +1080,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 2 (da4022_9x6.75_3b_0754ga_5037.txt)",
    "error": -0.008190060306195525,
    "status": "pass",
-   "seconds": 0.5392434597015381
+   "seconds": 0.7939743995666504
   },
   {
    "id": "rc-da4022_9x6.75_3b_5037-cp",
@@ -949,7 +1096,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 2 (da4022_9x6.75_3b_0754ga_5037.txt)",
    "error": 0.029732420035269425,
    "status": "pass",
-   "seconds": 0.5392484664916992
+   "seconds": 0.7939808368682861
   },
   {
    "id": "rc-da4022_9x6.75_4b_4036-ct",
@@ -965,7 +1112,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 2 (da4022_9x6.75_4b_1089ga_4036.txt)",
    "error": -0.017671355102037743,
    "status": "pass",
-   "seconds": 0.6098334789276123
+   "seconds": 0.78743577003479
   },
   {
    "id": "rc-da4022_9x6.75_4b_4036-cp",
@@ -981,7 +1128,7 @@
    "ref_source": "UIUC Propeller Data Site, vol. 2 (da4022_9x6.75_4b_1089ga_4036.txt)",
    "error": 0.03571769798174956,
    "status": "pass",
-   "seconds": 0.6098394393920898
+   "seconds": 0.7874422073364258
   },
   {
    "id": "rc-disk-wake",
@@ -997,7 +1144,7 @@
    "ref_source": "Momentum theory: V_wake = V \u221a(1 + C_T,disk)",
    "error": 0.007779433658863962,
    "status": "pass",
-   "seconds": 111.80910086631775
+   "seconds": 135.704980134964
   }
  ]
 }

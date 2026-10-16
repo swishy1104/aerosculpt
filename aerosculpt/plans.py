@@ -86,7 +86,7 @@ def estimate_runs(spec: dict, re_groups: int = 1) -> dict:
         per_design = len(env.get("aoas", [0])) * max(1, re_groups)
     fid = spec.get("fidelity", "draft")
     if spec.get("kind") != "optimize":
-        runs = {fid: per_design}
+        runs = {fid: per_design * (2 if spec.get("refine") else 1)}     # a zoom grid doubles the runs
         if spec.get("grid_study"):        # two coarser grids at one angle, billed at the exploration rate
             per_angle = per_design // max(1, len(env.get("aoas", [0])))
             runs[EXPLORE_FID.get(fid, "coarse")] = 2 * per_angle

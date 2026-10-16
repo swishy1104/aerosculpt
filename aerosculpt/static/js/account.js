@@ -1,4 +1,4 @@
-import { api, appTop, busy, esc, h, handleError, modal, requireAuth, toast, $ } from "/static/js/core.js";
+import { api, appTop, busy, esc, h, handleError, modal, requireAuth, timeAgo, toast, $ } from "/static/js/core.js";
 
 let me = await requireAuth();
 appTop(me, [{ label: "Account" }]);
@@ -71,3 +71,63 @@ $("#delete").addEventListener("click", () => {
     }],
   });
 });
+
+// ---- teams ----------------------------------------------------------------------------------------------------
+const ROLES = ["viewer", "editor", "admin", "owner"];
+async function renderTeams() {
+  const box = $("#teams-body");
+  let teams = [];
+  try { teams = await api("/api/teams"); } catch (e) { box.innerHTML = `<p class="small muted">${esc(e.message)}</p>`; return; }
+  const canCreate = me.plan === "team" || me.is_admin;
+  box.innerHTML = teams.map((t) => {
+    const admin = ["admin", "owner"].includes(t.role);
+    return `<div class="team" data-id="${t.id}" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:10px 0">
+      <div class="row spread"><b>${esc(t.name)}</b><span class="badge">${esc(t.role)}</span></div>
+      <table class="tbl compact" style="margin-top:6px"><tbody>
+        ${t.members.map((m) => `<tr><td>${esc(m.name || m.email)}<div class="small muted">${esc(m.email)}</div></td>
+          <td class="r">${admin && m.id !== me.id ? `<select data-user="${m.id}" class="role">${ROLES.map((r) => `<option ${r === m.role ? "selected" : ""}>${r}</option>`).join("")}</select>
+            <button class="btn sm ghost rm" data-user="${m.id}" type="button">Remove</button>` : esc(m.role)}</td></tr>`).join("")}
+        ${t.invites.map((i) => `<tr><td>${esc(i.email)}<div class="small muted">invited ${timeAgo(i.created_at)} · joins at first sign-in</div></td><td class="r">${esc(i.role)}</td></tr>`).join("")}
+      </tbody></table>
+      ${admin ? `<form class="row invite" style="gap:6px;margin-top:8px"><input type="email" name="email" placeholder="colleague@company.com" required style="flex:1">
+        <select name="role">${ROLES.slice(0, 3).map((r) => `<option ${r === "editor" ? "selected" : ""}>${r}</option>`).join("")}</select>
+        <button class="btn sm" type="submit">Invite</button></form>
+        <button class="btn sm ghost audit" type="button" style="margin-top:6px">Audit trail</button><div class="audit-box"></div>` : ""}
+    </div>`;
+  }).join("") + (canCreate ? `<form id="new-team" class="row" style="gap:6px;margin-top:10px"><input name="name" placeholder="New team name" required style="flex:1">
+    <button class="btn sm" type="submit">Create team</button></form>` : `<p class="small muted">${teams.length ? "" : "You are in no team yet. "}Creating teams is part of the Team plan.</p>`);
+  const nt = $("#new-team");
+  if (nt) nt.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try { await api("/api/teams", { method: "POST", body: { name: nt.name.value } }); toast("Team created.", "good"); renderTeams(); } catch (err) { handleError(err); }
+  });
+  box.querySelectorAll(".team").forEach((el) => {
+    const tid = el.dataset.id;
+    const inv = el.querySelector(".invite");
+    if (inv) inv.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api(`/api/teams/${tid}/members`, { method: "POST", body: { email: inv.email.value, role: inv.role.value } });
+        toast(r.status === "added" ? "Added to the team." : "Invitation saved: they join when they first sign in.", "good");
+        renderTeams();
+      } catch (err) { handleError(err); }
+    });
+    el.querySelectorAll("select.role").forEach((sel) => sel.addEventListener("change", async () => {
+      try { await api(`/api/teams/${tid}/members`, { method: "PATCH", body: { user_id: +sel.dataset.user, role: sel.value } }); toast("Role changed."); } catch (err) { handleError(err); renderTeams(); }
+    }));
+    el.querySelectorAll("button.rm").forEach((b) => b.addEventListener("click", async () => {
+      try { await api(`/api/teams/${tid}/members`, { method: "DELETE", body: { user_id: +b.dataset.user } }); renderTeams(); } catch (err) { handleError(err); }
+    }));
+    const au = el.querySelector(".audit");
+    if (au) au.addEventListener("click", async () => {
+      try {
+        const rows = await api(`/api/teams/${tid}/audit`);
+        el.querySelector(".audit-box").innerHTML = rows.length ? `<table class="tbl compact" style="margin-top:6px"><tbody>${rows.slice(0, 100).map((r) =>
+          `<tr><td class="small muted" style="white-space:nowrap">${new Date(r.at * 1000).toLocaleString()}</td><td class="small">${esc(r.email || "—")}</td>
+           <td class="small">${esc(r.action.replace(/_/g, " "))}</td><td class="small muted">${esc(r.detail || "")}</td></tr>`).join("")}</tbody></table>`
+          : `<p class="small muted">Nothing recorded yet.</p>`;
+      } catch (err) { handleError(err); }
+    });
+  });
+}
+renderTeams();

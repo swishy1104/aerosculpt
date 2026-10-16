@@ -597,6 +597,31 @@ export class Viewer {
     if (this.particles) this.particles.visible = on;
   }
 
+  // ---- vortex surfaces (Q-criterion iso-surface, see cfd/volume.py) -----------------------------
+  setVortex(vx) {
+    if (this.vortex) { this.root.remove(this.vortex); this.vortex.geometry.dispose(); this.vortex.material.dispose(); }
+    this.vortex = null;
+    if (!vx) return;
+    const pts = b64f32(vx.points);
+    const raw = atob(vx.faces);
+    const faces = new Uint32Array(raw.length / 4);
+    const dv = new DataView(Uint8Array.from(raw, (c) => c.charCodeAt(0)).buffer);
+    for (let i = 0; i < faces.length; i++) faces[i] = dv.getInt32(i * 4, true);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    g.setIndex(new THREE.BufferAttribute(faces, 1));
+    g.computeVertexNormals();
+    const m = new THREE.MeshStandardMaterial({ color: 0x4fc3f7, roughness: 0.5, metalness: 0.0, transparent: true, opacity: 0.55,
+      side: THREE.DoubleSide, depthWrite: false });
+    this.vortex = new THREE.Mesh(g, m);
+    this.vortex.renderOrder = 3;
+    this.root.add(this.vortex);
+  }
+
+  showVortex(on) {
+    if (this.vortex) this.vortex.visible = on;
+  }
+
   _advanceParticles(dt) {
     const pos = this.particles.geometry.attributes.position;
     const pts = this.streamPts;

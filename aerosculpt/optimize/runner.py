@@ -355,9 +355,10 @@ class Runner:
         if run.get("cached"):
             self.cached_runs = getattr(self, "cached_runs", 0) + 1
             return
-        self.cfd_runs += 1
+        n = 2 if run.get("zoom") else 1                  # a zoom grid run is the outer run plus the fine box
+        self.cfd_runs += n
         bill = getattr(ev, "bill_as", None) or ev.fid.name
-        self.runs_by_fid[bill] = self.runs_by_fid.get(bill, 0) + 1
+        self.runs_by_fid[bill] = self.runs_by_fid.get(bill, 0) + n
 
     def run_for(self, aoa, i_speed):
         """The run behind envelope angle `aoa` and speed index `i_speed` of the last design."""
@@ -497,6 +498,11 @@ class Runner:
         lo, hi, self.frontal_plan = self.envelope_box([body])
         self._progress(0.01, "Building virtual wind tunnel")
         ev = self.make_evaluator(lo, hi, self.fid)
+        if self.spec.get("refine"):
+            # local refinement: each run again on a nested grid about twice as fine around the body
+            from ..cfd.zoom import ZoomedEvaluator
+            self.total_runs *= 2
+            ev = ZoomedEvaluator(ev, log=self.log)
         polar, fields = self.evaluate_design(ev, body, "Flight envelope", self.sim_angles)
         saved = self.save_fields("baseline", fields, self.sim_angles)
         (self.out / "baseline_body.stl").write_bytes(body.to_stl_bytes())

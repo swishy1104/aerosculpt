@@ -153,6 +153,35 @@ lock and an optimizer range; free ones become search variables (`optimize/spaces
 - `aerosculpt/ai.py`: optional, OpenAI-compatible (`AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`); e.g.
   Ollama on this PC: `AI_BASE_URL=http://127.0.0.1:11434/v1 AI_MODEL=qwen3:4b`.
 
+## Professional features
+
+- **Wall model** (`tools/gen_kernels.py`, `cfd/tunnel.py`): above flight Re 5e5 in the hybrid regime each wall
+  cell slips so the grid's shear equals the log law at the flight Reynolds number (time-filtered, using the
+  cell's own relaxation time). Ahmed body drag on the standard grid 0.68 -> 0.53; the streamlined pod +245 % -> +147 %.
+- **Rolling road and spinning wheels**: moving-wall bounce-back (`wall[b, 0:3]`), a solid road `zg` moving with
+  the air and left out of the force; `geometry/wheels.py` proposes wheel boxes. Keep >= 3 cells of clearance.
+- **Zoom grid** (`cfd/zoom.py`): a nested box around the body about 2x finer, faces held at the outer mean
+  flow (flag 4), its Reynolds cap raised in proportion. Ahmed body within about 25 % (2x off without).
+- **Grid convergence** (`cfd/gridcheck.py`): three grids, Richardson extrapolation, GCI (Celik et al. 2008).
+- **CAD** (`geometry/cad.py`, gmsh/OpenCASCADE): STEP/IGES upload (time-limited child process), STEP export
+  (templates as smooth lofts through their own sections, other designs faceted); `fusion.py` sends template
+  dimensions as Fusion user parameters or imports the STEP, through the local FusionMCPBridge (owner, local only).
+- **Structure and mission** (`aero/structure.py`, `aero/mission.py`): spar sized for strength then stiffness,
+  wing mass, cap-fill rejection; stall, best speeds, endurance, range, climb. Wing designs carry mass, stall
+  margin and power for the trade-off chart; `POST /api/jobs/{id}/promote {"index": i}` opens any of them.
+- **Outputs**: PDF report (`report.py`), VTK zip of the mean flow and surface Cp (`cfd/volume.py`), Q-criterion
+  vortex surfaces in the 3D view, run comparison in the Runs tab.
+- **Platform**: jobs of a dead worker resume at once from the cache (`jobs.recover_orphans`), a server-side
+  time estimate from the real grids (`estimate.py`), a one-file Python client and CLI
+  (`aerosculpt/static/clients/aerosculpt_client.py`), teams with roles and an audit trail (`teams.py`),
+  OpenID Connect single sign-on (`sso.py`, `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET`).
+
+## Desktop app
+
+`python desktop.py` runs AeroSculpt privately on 127.0.0.1 (no sign-in, data in `%LOCALAPPDATA%\AeroSculpt`,
+NVIDIA GPU or CPU) and opens the browser. `pyinstaller desktop.spec --noconfirm` builds `dist/AeroSculpt/AeroSculpt.exe`
+(one folder, including the CUDA runtime from the `nvidia-*` pip packages).
+
 ## How it works
 
 ```

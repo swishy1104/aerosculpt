@@ -7,6 +7,7 @@ import { Propellers, rcCharts, rcResultsHTML } from "/static/js/tunnel-rc.js";
 import { HyperPanel, degC, hyperCharts, hyperFaceFields, hyperHistoryHTML, hyperResultsHTML } from "/static/js/tunnel-hyper.js";
 import { DesignParams, fixedLiftHTML, paramsTableHTML, strategyHTML } from "/static/js/design-params.js";
 import { FeatureEditor, featureChangesHTML } from "/static/js/features.js";
+import { accuracyHTML, compareRuns, exportsHTML, missionHTML, structureHTML, tradeoffHTML, wireExports, wireMission, wireTradeoff } from "/static/js/pro.js";
 
 let me = await requireAuth();
 const pid = location.pathname.split("/").filter(Boolean).pop();
@@ -24,6 +25,26 @@ try {
 }
 document.title = `${project.name} — AeroSculpt`;
 $$("[data-i]").forEach((el) => { el.innerHTML = icon(el.dataset.i); });
+// sharing with a team (the project's owner, when they belong to a team)
+if (project.mine !== false) {
+  api("/api/teams").then((teams) => {
+    const mine = teams.filter((t) => ["editor", "admin", "owner"].includes(t.role));
+    if (!mine.length) return;
+    const sel = $("#share-team");
+    sel.innerHTML = `<option value="">Not shared</option>` + mine.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+    sel.value = project.team ? String(project.team.id) : "";
+    $("#share-row").classList.remove("hidden");
+    sel.addEventListener("change", async () => {
+      try {
+        await api(`/api/projects/${pid}/share`, { method: "POST", body: { team_id: sel.value ? +sel.value : null } });
+        toast(sel.value ? "Shared: team members see it by their role." : "No longer shared.", "good");
+      } catch (e) { handleError(e); }
+    });
+  }).catch(() => {});
+}
+// Fusion on this computer (local preview, owner only): the results offer to send the design there
+let fusionState = null;
+api("/api/fusion").then((f) => { fusionState = f; }).catch(() => {});
 
 const titleInput = h("input", { class: "title-edit", type: "text", value: project.name, "aria-label": "Project name", maxlength: 120 });
 titleInput.addEventListener("change", async () => {
@@ -36,6 +57,7 @@ const top = appTop(me, [{ label: "Projects", href: "/app" }, titleInput]);
 
 // ---- state ------------------------------------------------------------------------------------------
 const S = project.settings;
+S.ground = Object.assign({ enabled: false, clearance: 0 }, S.ground || {});
 S.envelope = Object.assign({ speed_min: 15, speed_max: 40, speed_count: 4, aoa_min: 0, aoa_max: 8, aoa_count: 3, altitude: 0, yaw: 0, ref_area: null }, S.envelope || {});
 S.zones = S.zones || [];
 const opt = Object.assign({ objective: "drag", mode: "auto", aspects: ["nose", "tail"], max_change: 0.25, iterations: Math.min(24, me.limits.max_iterations),
@@ -54,6 +76,7 @@ const COMPUTE = catalog.compute || { backend: "cpu", seconds_per_run: { coarse: 
 const PER_RUN_S = COMPUTE.seconds_per_run;
 const ZONE_TYPES = {
   protect: { label: "Protect", color: "--protect", help: "Geometry inside never moves", name: "Protected region" },
+  wheel: { label: "Wheel", color: "--keep", help: "Spins on the rolling road; never reshaped", name: "Wheel", road: true },
   keep: { label: "Keep inside", color: "--keep", help: "Volume stays enclosed (payload, motor)", name: "Payload bay" },
   design: { label: "Design only", color: "--design", help: "Only these areas may change", name: "Design region" },
   material: { label: "Material", color: "--material", help: "Its own skin material (nose cap, leading edge)", name: "Material region", only: "supersonic" },
@@ -123,6 +146,7 @@ function showPreview(fit = false) {
   viewer.setGhost(null);
   viewer.setSlice(null);
   viewer.setStreamlines(null);
+  viewer.setVortex(null);
   viewer.setTunnel(null);
   viewer.setShock(null);
   showingResults = false;
@@ -213,7 +237,7 @@ function saveSettings() {
     try {
       project = await api(`/api/projects/${pid}`, { method: "PATCH", body: { settings: {
         units: S.units, ...(S.units === "custom" ? { unit_scale: S.unit_scale } : {}), size_ok: !!S.size_ok, forward: S.forward, up: S.up, envelope: S.envelope, zones: S.zones, features: S.features || [],
-        tunnel, propellers: S.propellers, hyper: S.hyper, optimize: opt, fidelity,
+        tunnel, propellers: S.propellers, hyper: S.hyper, optimize: opt, fidelity, ground: S.ground || { enabled: false, clearance: 0 },
         ...(S.template ? { template: { values: S.template.values, params: S.template.params } } : {}) } } });
       if (S.template) {
         const ne = project.settings.envelope;
@@ -267,12 +291,13 @@ function fileSizeOfBody() {
 const round = (v) => Math.round(v * 1000) / 1000;
 
 function addZone(type) {
-  if (S.zones.length >= me.limits.max_zones) {
+  if (type !== "wheel" && S.zones.filter((q) => q.type !== "wheel").length >= me.limits.max_zones) {
     return upgradePrompt(`${me.plan_name} allows ${me.limits.max_zones} protected regions. Pro and Team allow many more.`);
   }
   const center = frame.bodyToFile([0, 0, 0]).map(round);
   const ext = fileSizeOfBody();
   const z = { id: Math.random().toString(36).slice(2, 10), type, shape: type === "keep" ? "cylinder" : "box",
+    ...(type === "wheel" ? { rotation: [0, 0, 0] } : {}),
     center, size: ext.map((v) => round(v * (type === "keep" ? 0.35 : 0.18))),
     name: `${ZONE_TYPES[type].name} ${S.zones.filter((q) => q.type === type).length + 1}` };
   if (type === "material") z.material = "rcc";
@@ -289,6 +314,7 @@ function renderZoneButtons() {
   box.innerHTML = "";
   for (const [t, d] of Object.entries(ZONE_TYPES)) {
     if (d.only && d.only !== tunnel) continue;
+    if (d.road && !(S.ground && S.ground.enabled)) continue;
     const b = h("button", { class: "btn sm", type: "button", style: { "--zc": `var(${d.color})` }, title: d.help,
       html: `<span class="dot"></span><b>${d.label}</b><span class="muted" style="font-weight:500">${esc(d.help)}</span>` });
     b.addEventListener("click", () => addZone(t));
@@ -776,6 +802,16 @@ for (const k of ["max_length", "max_width", "max_height", "min_thickness"]) {
   el.addEventListener("change", () => { const v = parseFloat(el.value); opt[k] = Number.isFinite(v) && v > 0 ? v / 1000 : null; saveSettings(); });
 }
 $("#mass_kg").value = opt.mass_kg || "";
+// wing structure settings (winged templates): spar material, load factor, stiffness, skin
+opt.structure = Object.assign({ material: "carbon", load_factor: 3.8, max_tip_deflection: 0.15, skin_kg_m2: 0.45 }, opt.structure || {});
+$("#st-material").value = opt.structure.material;
+$("#st-n").value = opt.structure.load_factor;
+$("#st-defl").value = Math.round(100 * opt.structure.max_tip_deflection);
+$("#st-skin").value = opt.structure.skin_kg_m2;
+for (const [id, key, f] of [["#st-material", "material", (v) => v], ["#st-n", "load_factor", Number], ["#st-defl", "max_tip_deflection", (v) => Number(v) / 100],
+  ["#st-skin", "skin_kg_m2", Number]]) {
+  $(id).addEventListener("change", (e) => { opt.structure[key] = f(e.target.value); saveSettings(); });
+}
 $("#mass_kg").addEventListener("change", (e) => { const v = parseFloat(e.target.value); opt.mass_kg = Number.isFinite(v) && v > 0 ? v : null; saveSettings(); });
 $("#keep_stability").checked = opt.keep_stability !== false;
 $("#keep_stability").addEventListener("change", (e) => { opt.keep_stability = e.target.checked; saveSettings(); });
@@ -864,7 +900,11 @@ function estimates() {
   const per = catalog.credits_per_run[fidelity];
   const time = (runs, fid) => PER_RUN_S[fid] * (1 + (runs - 1) * 0.55);
   $("#run-analyze").innerHTML = withProps ? `${icon("fan")}Run RC tunnel` : `${icon("wind")}Simulate envelope`;
-  $("#analyze-est").innerHTML = `${perDesign} CFD run${perDesign > 1 ? "s" : ""} · ≈ ${fmtDuration(time(perDesign, fidelity))} · up to ${perDesign * per} credit${perDesign * per > 1 ? "s" : ""} · ${fmtInt(me.credits_left)} left`;
+  const zoom = $("#opt-refine").checked, gcheck = $("#opt-gridcheck").checked;
+  const aRuns = perDesign * (zoom ? 2 : 1);
+  const aCred = Math.max(1, Math.ceil(aRuns * per + (gcheck ? 2 * (perDesign / aoas.length) * (catalog.credits_per_run[catalog.explore_fidelity[fidelity] || "coarse"] || 0.4) : 0)));
+  const aSecs = time(perDesign, fidelity) * (zoom ? 3 : 1) * (gcheck ? 1.6 : 1);
+  $("#analyze-est").innerHTML = `${aRuns} CFD run${aRuns > 1 ? "s" : ""} · <span id="an-time">≈ ${fmtDuration(aSecs)}</span> · up to ${aCred} credit${aCred > 1 ? "s" : ""} · ${fmtInt(me.credits_left)} left`;
   const xf = catalog.explore_fidelity[fidelity] || "coarse";
   // optional ideas are screened on/off first (their dimensions join only if one is kept); with CFD every
   // screened design also runs at a sub-cell shift (paired)
@@ -887,7 +927,7 @@ function estimates() {
     ? `≈ ${Math.round(nScreen)} screening + up to ${Math.max(0, opt.iterations - Math.round(nScreen))} search designs on ${exploreCfd ? `${xf} CFD (${nA} angle${nA > 1 ? "s" : ""})` : "the wing model"}${
       cRuns ? ` · ${cRuns} confirmation runs at ${FID_LABEL[fidelity].toLowerCase()} fidelity` : " · confirmed at full model resolution"}`
     : `Tries up to ${opt.iterations} designs, then double-checks the best on a finer grid`) +
-    ` · ≈ ${fmtDuration(secs)} · up to ${credits} credit${credits > 1 ? "s" : ""}` +
+    ` · <span id="opt-time">≈ ${fmtDuration(secs)}</span> · up to ${credits} credit${credits > 1 ? "s" : ""}` +
     (opt.iterations >= nScreen + 2 ? ""
       : advOn ? ` · <span style="color:var(--warning-text)">budget too small for the screening — lock some parameters or raise it</span>`
       : opt.iterations >= maxIter() ? ` · <span style="color:var(--warning-text)">your plan's design limit leaves some ideas untested</span>`
@@ -896,6 +936,26 @@ function estimates() {
   renderOptMode();
   renderVerify();
   summaries();
+  serverEstimate();
+}
+
+// the server works out the grids the job will really use (a small body explores on the finer grid)
+let estTimer = null, estSeq = 0;
+function serverEstimate() {
+  clearTimeout(estTimer);
+  estTimer = setTimeout(async () => {
+    if (tunnel === "supersonic") return;
+    const seq = ++estSeq;
+    const range = (e) => (e.seconds_low && e.seconds_low < 0.85 * e.seconds ? `≈ ${fmtDuration(e.seconds_low)}–${fmtDuration(e.seconds)}` : `≈ ${fmtDuration(e.seconds)}`);
+    try {
+      const [a, o] = await Promise.all([api(`/api/projects/${pid}/estimate`, { method: "POST", body: jobSpec("analyze") }),
+        api(`/api/projects/${pid}/estimate`, { method: "POST", body: jobSpec("optimize") })]);
+      if (seq !== estSeq) return;
+      const at = $("#an-time"), ot = $("#opt-time");
+      if (at) { at.textContent = range(a); at.title = a.lines.join("\n"); }
+      if (ot) { ot.textContent = range(o); ot.title = o.lines.join("\n"); }
+    } catch (e) { /* the quick estimate stays */ }
+  }, 700);
 }
 
 function hyperEstimates() {
@@ -1005,6 +1065,11 @@ function jobSpec(kind) {
   if (tunnel === "supersonic") spec.hyper = S.hyper;
   else Object.assign(spec, { fidelity, envelope: S.envelope, propellers: S.propellers });
   if (kind === "optimize") spec.optimize = { ...opt, mode: advOn ? opt.mode : "auto" };
+  if (tunnel !== "supersonic") spec.ground = S.ground || { enabled: false, clearance: 0 };
+  if (kind === "analyze" && tunnel !== "supersonic") {
+    spec.grid_study = $("#opt-gridcheck").checked;
+    spec.refine = $("#opt-refine").checked;
+  }
   return spec;
 }
 async function submit(kind, btn) {
@@ -1276,6 +1341,7 @@ async function showHyperGeometry(entry, R) {
   } else viewer.setGhost(null);
   viewer.setTunnel(null);
   viewer.setStreamlines(null);
+  viewer.setVortex(null);
   viewer.setSlice(null);
   viewer.setProps([]);
   let ix = 0;
@@ -1320,6 +1386,8 @@ async function showResultGeometry() {
   viewer.setTunnel(fields.slices.bounds);
   viewer.setStreamlines(fields.streamlines);
   viewer.showStreamlines(vis.stream);
+  viewer.setVortex(fields.vortex || null);
+  viewer.showVortex(!!vis.vortex);
   viewer.setSlice(fields.slices, vis.slice, vis.sliceField);
   if (firstResults && vis.mode === "shaded") vis.mode = "cp";
   if (!(vis.mode in viewer.fields) && !["shaded", "wire"].includes(vis.mode)) vis.mode = "cp";
@@ -1347,6 +1415,7 @@ async function showModelOnly(j, R) {
   viewer.setProps([]);
   viewer.setTunnel(null);
   viewer.setStreamlines(null);
+  viewer.setVortex(null);
   viewer.setSlice(null);
   if (!["shaded", "wire", "deform"].includes(vis.mode)) vis.mode = "shaded";
   viewer.setMode(vis.mode);
@@ -1393,6 +1462,8 @@ function updateToolbar() {
   $("#t-slice").disabled = !flow;
   $("#t-slicefield").disabled = !flow || !vis.slice;
   $("#t-stream").classList.toggle("on", flow && vis.stream);
+  $("#t-vortex").disabled = !flow || !viewer.vortex;
+  $("#t-vortex").classList.toggle("on", flow && !!vis.vortex && !!viewer.vortex);
   $("#t-slice").classList.toggle("on", flow && !!vis.slice);
   $("#t-slice").textContent = "Slice: " + ({ xz: "side", xy: "top" }[vis.slice] || "off");
   $("#t-slicefield").textContent = "Slice: " + (vis.sliceField === "cp" ? "pressure" : "speed");
@@ -1425,7 +1496,10 @@ $$("#g-surface .vbtn").forEach((b) => b.addEventListener("click", () => {
   viewer.setMode(vis.mode);
   updateToolbar();
 }));
+$("#opt-refine").addEventListener("change", () => estimates());
+$("#opt-gridcheck").addEventListener("change", () => estimates());
 $("#t-stream").addEventListener("click", () => { vis.stream = !vis.stream; viewer.showStreamlines(vis.stream); updateToolbar(); });
+$("#t-vortex").addEventListener("click", () => { vis.vortex = !vis.vortex; viewer.showVortex(vis.vortex); updateToolbar(); });
 $("#t-slice").addEventListener("click", async () => { vis.slice = { null: "xz", xz: "xy", xy: null }[String(vis.slice)]; await refreshSlice(); });
 $("#t-slicefield").addEventListener("click", async () => { vis.sliceField = vis.sliceField === "speed" ? "cp" : "speed"; await refreshSlice(); });
 $("#t-zones").addEventListener("click", () => { vis.zones = !vis.zones; renderZones3D(); updateToolbar(); });
@@ -1554,7 +1628,9 @@ function renderResults() {
       The solver's drag is validated; its lift is not yet — on thin wings it currently comes out 50–66% low
       (<a href="/validation" target="_blank">validation</a>). Use these values for trends, not for sizing.</div></div>` : ""}
     ${lifting && sum.ld_max ? `<div class="notice" style="margin-top:10px">${icon("target")}<div>Best L/D in the envelope: <b style="color:var(--text)">${sig(sum.ld_max, 3)}</b> at ${sum.ld_max_at.aoa}° and ${sum.ld_max_at.v} m/s${sum.cl_alpha !== undefined ? ` · lift slope ${sig(sum.cl_alpha, 3)} /rad` : ""}</div></div>` : ""}
+    ${accuracyHTML(result)}
     ${rcResultsHTML(result, s, sb, sum, best)}
+    ${structureHTML(result)}${missionHTML(result)}${tradeoffHTML(result)}
     <div class="section-title">Drag breakdown at this condition</div>
     ${breakdown(s, p)}
     <div class="section-title">Across the envelope</div>
@@ -1566,8 +1642,12 @@ function renderResults() {
         <td class="r">${fmtForce(q.speeds[cond.v].drag_N)}</td></tr>`).join("")}</tbody></table></div>
     ${result.setup.symmetric ? `<p class="small muted" style="margin-top:6px">* Mirrored from the positive angle: the body is symmetric top-to-bottom, so it was not simulated twice.</p>` : ""}
     ${details()}
-    <div class="row wrap" style="margin-top:16px">${!best ? `<button class="btn sm" id="go-opt">${icon("sparkles")}Optimize this design</button>` : ""}
-      <a class="btn sm ghost" href="/app/report/${shownJob.id}" target="_blank">${icon("file")}Report</a></div>`;
+    ${exportsHTML(result, shownJob, me, fusionState)}
+    <div class="row wrap" style="margin-top:12px">${!best ? `<button class="btn sm" id="go-opt">${icon("sparkles")}Optimize this design</button>` : ""}
+      <a class="btn sm ghost" href="/app/report/${shownJob.id}" target="_blank">${icon("file")}Report page</a></div>`;
+  wireExports(box, shownJob);
+  wireMission(box, result, shownJob);
+  wireTradeoff(box, result, shownJob);
   const go = $("#go-opt");
   if (go) go.addEventListener("click", () => { $('[data-sec="optimize"]').classList.remove("closed"); $("#run-optimize").scrollIntoView({ behavior: "smooth" }); });
   drawCharts(base, best);
@@ -1841,15 +1921,35 @@ async function loadRuns() {
     const cls = { running: "warn", done: "good", failed: "bad" }[j.status] || "";
     const sub = !env ? "single condition (older run)" : env.machs ? `${env.aoas.length} angles × ${env.machs.length} Mach` : `${env.aoas.length} angles × ${env.speeds.length} speeds`;
     const el = h("div", { class: "job" + (shownJob && shownJob.id === j.id ? " on" : ""), dataset: { id: j.id } });
-    el.innerHTML = `<span class="badge ${cls}"><span class="dot"></span>${esc(j.status)}</span>
+    el.innerHTML = `${j.status === "done" && j.spec.tunnel !== "supersonic" ? `<input type="checkbox" class="cmp" title="Select two runs to compare" data-id="${j.id}">` : ""}
+      <span class="badge ${cls}"><span class="dot"></span>${esc(j.status)}</span>
       <div class="grow"><div style="font-size:13.5px;color:var(--text)">${esc(what)}</div>
       <div class="small muted">${timeAgo(j.created_at)} · ${sub}</div></div><span class="small" style="color:var(--text-2)">${res}</span>`;
-    el.addEventListener("click", async () => {
+    el.addEventListener("click", async (e) => {
+      if (e.target.classList.contains("cmp")) return;
       if (j.status === "done") await openJob(await api(`/api/jobs/${j.id}`));
       else watch(await api(`/api/jobs/${j.id}`));
     });
     list.append(el);
   }
+  const cmpBox = h("div", { id: "cmp-box" });
+  const cmpBtn = h("button", { class: "btn sm", type: "button", disabled: true, html: `${icon("compare")}Compare selected runs` });
+  box.prepend(cmpBox);
+  box.prepend(cmpBtn);
+  const picked = () => [...box.querySelectorAll(".cmp:checked")].map((c) => jobs.find((q) => q.id === c.dataset.id));
+  box.querySelectorAll(".cmp").forEach((c) => c.addEventListener("change", () => {
+    const n = picked().length;
+    if (n > 2) c.checked = false;
+    cmpBtn.disabled = picked().length !== 2;
+  }));
+  cmpBtn.addEventListener("click", async () => {
+    const [a, b] = picked();
+    try {
+      await compareRuns(cmpBox, a, b);
+      const close = cmpBox.querySelector("#cmp-close");
+      if (close) close.addEventListener("click", () => { cmpBox.innerHTML = ""; });
+    } catch (e) { handleError(e); }
+  });
   return jobs;
 }
 
@@ -1862,6 +1962,40 @@ const tctx = {
 };
 props = new Propellers(tctx);
 hyper = new HyperPanel(tctx);
+
+// ---- rolling road and wheels ------------------------------------------------------------------------------
+function renderRoad() {
+  const show = tunnel !== "supersonic" && !winged();
+  $("#road-block").classList.toggle("hidden", !show);
+  $("#road-on").checked = !!S.ground.enabled;
+  $("#road-opts").classList.toggle("hidden", !S.ground.enabled);
+  if (document.activeElement !== $("#road-clear")) $("#road-clear").value = S.ground.clearance || 0;
+  const nw = S.zones.filter((z) => z.type === "wheel").length;
+  $("#wheels-detect").textContent = nw ? `Detect again (${nw} wheel${nw > 1 ? "s" : ""})` : "Detect wheels";
+}
+$("#road-on").addEventListener("change", (e) => {
+  S.ground.enabled = e.target.checked;
+  renderRoad();
+  renderZoneButtons();
+  saveSettings();
+  estimates();
+});
+$("#road-clear").addEventListener("change", (e) => {
+  S.ground.clearance = Math.max(0, Number(e.target.value) || 0);
+  saveSettings();
+});
+$("#wheels-detect").addEventListener("click", async () => {
+  try {
+    const r = await api(`/api/projects/${pid}/wheels`, { method: "POST", body: { units: S.units, unit_scale: S.unit_scale, forward: S.forward, up: S.up } });
+    S.zones = S.zones.filter((z) => z.type !== "wheel").concat(r.zones);
+    renderZones();
+    renderZones3D();
+    renderRoad();
+    saveSettings();
+    toast(r.zones.length ? `${r.zones.length} wheel(s) found — check the boxes and adjust them if needed.` : "No wheels found at the bottom of the model: add Wheel regions by hand.",
+      r.zones.length ? "good" : "");
+  } catch (e) { handleError(e); }
+});
 
 function applyTunnel(t, user = false) {
   tunnel = t;
@@ -1884,6 +2018,8 @@ function applyTunnel(t, user = false) {
   $("#iterations_o").textContent = opt.iterations;
   renderZoneButtons();
   renderZones();
+  renderRoad();
+  $("#accuracy-block").classList.toggle("hidden", t === "supersonic");
   props.render();
   renderFidelity();
   renderObjective();

@@ -36,6 +36,9 @@
         <label class="field hidden" id="real-len-row"><span>Real overall length (m)</span>
           <input type="number" id="real_len" step="any" min="0" placeholder="e.g. 4.46"></label>
         <div id="solid-box"></div>
+        <div id="share-row" class="row hidden" style="gap:8px;align-items:center;margin-top:10px">
+          <span class="small muted">Share with team</span>
+          <select id="share-team" style="flex:1"></select></div>
         <div class="two">
           <label class="field"><span>Nose points along</span><select id="forward"></select></label>
           <label class="field"><span>Up is</span><select id="up"></select></label>
@@ -101,6 +104,17 @@
         <label class="field"><span>Reference area for coefficients</span>
           <div class="input-unit"><input type="number" id="ref_area" min="0" step="any" placeholder="Auto: frontal area"><span class="unit">m²</span></div></label>
         </details>
+        <div id="road-block" class="road-block">
+          <label class="check"><input type="checkbox" id="road-on"><span><b>Rolling road</b> <span class="muted">for cars and ground vehicles</span></span></label>
+          <div id="road-opts" class="hidden">
+            <div class="row" style="gap:8px;align-items:flex-end">
+              <label class="field sm" style="flex:1"><span>Ride height above the road</span>
+                <div class="input-unit"><input type="number" id="road-clear" min="0" max="5" step="0.005" value="0"><span class="unit">m</span></div></label>
+              <button class="btn sm" type="button" id="wheels-detect">Detect wheels</button></div>
+            <p class="small muted" id="road-note" style="margin:6px 0 0">The floor moves with the air, as on a moving-belt rig, and wheels spin.
+              The car sits level: only 0° is run. Box each wheel with a Wheel region (Detect wheels proposes them).</p>
+          </div>
+        </div>
         <div class="kv" id="flow-kv"></div>
       </div>
     </div>
@@ -168,6 +182,12 @@
           <div class="est" id="fid-note"></div>
         </div>
         <div id="panel-block" class="notice info hidden" style="margin:0"></div>
+        <div id="accuracy-block" style="margin-top:10px">
+          <label class="check"><input type="checkbox" id="opt-refine"><span><b>Refine near the body</b>
+            <span class="muted">a nested grid about 2× finer around it · ~3× the time</span></span></label>
+          <label class="check"><input type="checkbox" id="opt-gridcheck"><span><b>Check grid convergence</b>
+            <span class="muted">two coarser grids → a grid-independent estimate and its uncertainty · ~1.6× the time</span></span></label>
+        </div>
         <button class="btn primary block" id="run-analyze" type="button" style="margin-top:14px"></button>
         <div class="est" id="analyze-est"></div>
       </div>
@@ -208,6 +228,18 @@
         <div id="opt-wing" class="hidden">
           <label class="field"><span>Flight mass (lift to carry)</span><div class="input-unit"><input type="number" id="mass_kg" min="0" step="0.1" placeholder="Original design's lift"><span class="unit">kg</span></div></label>
           <label class="check" style="margin:0 0 12px"><input type="checkbox" id="keep_stability"><span>Keep stability <span class="muted">(neutral point moves at most 5% of the mean chord)</span></span></label>
+          <details class="adv" id="structure-opts"><summary>Structure <span class="muted">spar material, load factor, stiffness</span></summary>
+            <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+              <label class="field sm" style="flex:1 1 150px"><span>Spar material</span><select id="st-material">
+                <option value="carbon">Carbon fibre</option><option value="glass">Glass fibre</option>
+                <option value="aluminium">Aluminium 6061</option><option value="spruce">Spruce / plywood</option></select></label>
+              <label class="field sm" style="width:100px"><span>Load factor</span><input type="number" id="st-n" min="1" max="12" step="0.1"></label>
+              <label class="field sm" style="width:120px"><span>Max tip bend</span><div class="input-unit"><input type="number" id="st-defl" min="2" max="50" step="1"><span class="unit">%</span></div></label>
+              <label class="field sm" style="width:120px"><span>Skin</span><div class="input-unit"><input type="number" id="st-skin" min="0.05" max="5" step="0.05"><span class="unit">kg/m²</span></div></label>
+            </div>
+            <p class="small muted" style="margin:4px 0 0">Every wing design gets a spar sized for this load (× 1.5 safety); a wing too thin to hold it is rejected,
+              and the results plot drag against structure mass.</p>
+          </details>
         </div>
         <details class="opt-limits"><summary class="label">Size and wall limits</summary>
           <div class="three" style="margin-top:8px">
@@ -245,6 +277,7 @@
       </div>
       <div class="vp-group cfd-only" id="g-flow">
         <button class="vbtn" id="t-stream" disabled>Streamlines</button>
+        <button class="vbtn cfd-only" id="t-vortex" disabled title="Vortex surfaces: where rotation dominates strain (Q-criterion)">Vortices</button>
         <button class="vbtn" id="t-slice" disabled>Slice: off</button>
         <button class="vbtn" id="t-slicefield" disabled>Slice: speed</button>
       </div>

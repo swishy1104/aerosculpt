@@ -59,7 +59,8 @@ def stream_collide(f, fn, flags, bidx, qtab, wall, tau_x, tau_y, tau_z, feq_ff, 
     """One fused pull-stream + regularized-BGK/Smagorinsky collision step.
 
     f holds post-collision populations of the previous step; fn receives the new ones.
-    flags: 0 fluid, 1 solid, 2 far-field (Dirichlet equilibrium), 3 outlet.
+    flags: 0 fluid, 1 solid, 2 far-field (Dirichlet equilibrium), 3 outlet, 4 nested-grid boundary
+    (populations held where an outer grid's mean flow put them).
     Wall links use Bouzidi linear interpolated bounce-back with fractions qtab[b, i], moving
     walls (wall[b, 0:3]: the surface's own velocity, e.g. a spinning wheel) and, with wmod > 0,
     a log-law wall model at the flight viscosity nu_w (wall[b, 3:6] normal, wall[b, 6] distance).
@@ -114,6 +115,28 @@ def stream_collide(f, fn, flags, bidx, qtab, wall, tau_x, tau_y, tau_z, feq_ff, 
                     fn[16, x, y, z] = feq_ff[16]
                     fn[17, x, y, z] = feq_ff[17]
                     fn[18, x, y, z] = feq_ff[18]
+                    continue
+                if t == 4:
+                    # nested-grid boundary: populations held at the outer grid's mean flow
+                    fn[0, x, y, z] = f[0, x, y, z]
+                    fn[1, x, y, z] = f[1, x, y, z]
+                    fn[2, x, y, z] = f[2, x, y, z]
+                    fn[3, x, y, z] = f[3, x, y, z]
+                    fn[4, x, y, z] = f[4, x, y, z]
+                    fn[5, x, y, z] = f[5, x, y, z]
+                    fn[6, x, y, z] = f[6, x, y, z]
+                    fn[7, x, y, z] = f[7, x, y, z]
+                    fn[8, x, y, z] = f[8, x, y, z]
+                    fn[9, x, y, z] = f[9, x, y, z]
+                    fn[10, x, y, z] = f[10, x, y, z]
+                    fn[11, x, y, z] = f[11, x, y, z]
+                    fn[12, x, y, z] = f[12, x, y, z]
+                    fn[13, x, y, z] = f[13, x, y, z]
+                    fn[14, x, y, z] = f[14, x, y, z]
+                    fn[15, x, y, z] = f[15, x, y, z]
+                    fn[16, x, y, z] = f[16, x, y, z]
+                    fn[17, x, y, z] = f[17, x, y, z]
+                    fn[18, x, y, z] = f[18, x, y, z]
                     continue
                 b = bidx[x, y, z]
                 if b < 0:

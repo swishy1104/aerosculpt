@@ -25,7 +25,11 @@
         <ul class="small" style="padding-left:18px;color:var(--text-2)">
           <li><b style="color:var(--text)">Direct regime</b> (Reynolds number resolved by the grid): within a few percent of reference data, converging with resolution.</li>
           <li><b style="color:var(--text)">Bluff and sharp-edged bodies</b> at flight Reynolds numbers (drones, pods, rockets with fins, blunt bases): within about 10–15%.</li>
-          <li><b style="color:var(--text)">Highly streamlined bodies</b> at high Reynolds number: the hybrid model over-predicts drag because the tunnel's boundary layer separates earlier than a turbulent one in flight. Trends and relative improvements remain meaningful; absolute drag is conservative. Improving this case is on the roadmap.</li>
+          <li><b style="color:var(--text)">Cars</b> (the Ahmed body on a rolling road, 25° and 35° rear slant): with <b>Refine near the body</b> (the nested
+            zoom grid) within 6–14% of the wind-tunnel measurement; on the standard grid alone about 2× too high. Use the zoom grid for car drag.</li>
+          <li><b style="color:var(--text)">Highly streamlined bodies</b> at high Reynolds number: still over-predicted, about 2.5× (it was 3.5× before the
+            wall model). The grid carries a capped Reynolds number, so the boundary layer above the first cell stays thicker than in flight and the
+            pressure does not recover at the tail. Trends and relative improvements remain meaningful; absolute drag is conservative.</li>
           <li><b style="color:var(--text)">Lift on thin wings in the CFD</b> is not validated yet: the wing case comes out 50–66% low at every fidelity, for the same
             boundary-layer reason. Lift, L/D and pitching moment from the CFD are shown as indicative only, and lift-based CFD goals are offered as indicative only.</li>
           <li><b style="color:var(--text)">Wing model</b> (what the optimizer uses for wings, tails and NACA sections): the vortex lattice gives exactly the

@@ -20,6 +20,9 @@
     <button class="btn primary block" type="submit">Sign in</button>
     <p class="small" style="margin:14px 0 0;display:flex;justify-content:space-between"><a href="/forgot">Forgot password?</a><a href="/signup" id="signup-link">Create an account</a></p>
   </form>
+  <div class="hidden" id="sso-box" style="margin-top:14px">
+    <a class="btn block" id="sso-btn" href="/auth/sso/start">Sign in with single sign-on</a>
+  </div>
   <div class="guest-box hidden" id="guest-box">
     <div class="or"><span>or</span></div>
     <button class="btn block" type="button" id="guest-btn">Try the live demo — no account needed</button>

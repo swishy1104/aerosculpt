@@ -866,6 +866,14 @@ details.adv > summary .muted { font-weight: 400; margin-left: 4px; }
 .adv-switch input:checked + .sw::after { transform: translateX(13px); }
 .adv-switch input:focus-visible + .sw { outline: 2px solid var(--accent); outline-offset: 2px; }
 .adv-switch #adv-hint { margin-left: auto; }
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--text-2); margin: 6px 0; cursor: pointer; }
+.check input { margin-top: 2px; accent-color: var(--accent); }
+.road-block { margin: 10px 0 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.field.sm > span { font-size: 11.5px; }
+.field.sm input { padding: 5px 8px; font-size: 12.5px; }
+.mission-in .field.sm { width: 104px; margin: 0; }
+svg .ax { font: 10px var(--sans, sans-serif); fill: var(--muted); }
+.joblist .cmp { margin-right: 4px; accent-color: var(--accent); }
 .rounds { margin: 0 0 12px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
 .rounds li { display: flex; gap: 8px; align-items: baseline; }
 .rounds .rn { flex: none; font: 600 11px var(--mono); color: var(--muted); width: 56px; }

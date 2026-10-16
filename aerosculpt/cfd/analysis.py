@@ -334,7 +334,7 @@ class Evaluator:
     """
 
     def __init__(self, envelope_min, envelope_max, frontal_area, body_length, ref_area, ref_length,
-                 fidelity: Fidelity, log=None, cancel=None, planform_area=None, cache=None, ground=None):
+                 fidelity: Fidelity, log=None, cancel=None, planform_area=None, cache=None, ground=None, domain=None):
         """ground: {"z": road height (wind axes, m), "wheels": [(x, y, z, radius, width), ...] in m}
         puts the body on a moving road with spinning wheels (zero angles only)."""
         self.fid = fidelity
@@ -344,8 +344,10 @@ class Evaluator:
         self.log = log or (lambda msg: None)
         self.cancel = cancel or (lambda: False)
         L, W, H = (np.asarray(envelope_max) - np.asarray(envelope_min))
-        self.domain = plan_domain(envelope_min, envelope_max, fidelity.cells, frontal_area, planform_area=planform_area,
-                                  ground_z=None if ground is None else float(ground["z"]))
+        self.nest = None          # (outer mean field, outer domain, outer cross-section m^2): a zoom grid
+        self.domain = domain if domain is not None else plan_domain(
+            envelope_min, envelope_max, fidelity.cells, frontal_area, planform_area=planform_area,
+            ground_z=None if ground is None else float(ground["z"]))
         dx = self.domain.dx
         self.wheels = ()
         if ground is not None:
@@ -375,7 +377,8 @@ class Evaluator:
         return FlowSettings(u_lat=self.fid.u_lat, re_sim=re_sim, l_ref_cells=L_cells,
                             smagorinsky=0.0 if re_sim < 500 else 0.14,
                             wall_model=wm, wall_nu=self.fid.u_lat * L_cells / re_flight if wm else 0.0,
-                            ground=self.ground is not None, wheels=self.wheels)
+                            ground=self.ground is not None, wheels=self.wheels,
+                            ramp_steps=0 if self.nest is not None else 600)
 
     def reset(self):
         """Fresh lattice after a diverged run; the next run starts cold."""
@@ -391,7 +394,7 @@ class Evaluator:
                 # near-field scale in cells: mean chord for flat airframes, else the body's size across
                 "ln_cells": round(self.Ln_cells, 1),
                 "fidelity": self.fid.name, "re_cap": self.fid.re_cap, "ground": self.ground is not None,
-                "wheels": len(self.wheels),
+                "wheels": len(self.wheels), "ground_gap_cells": getattr(self, "ground_gap_cells", None),
                 "backend": getattr(self.tunnel, "backend", "cpu") if self.tunnel is not None else None,
                 "ref_area": self.ref_area, "ref_length": self.ref_length}
 
@@ -426,6 +429,8 @@ class Evaluator:
         if self.tunnel is None:
             from .gpu import make_tunnel
             self.tunnel = make_tunnel(self.domain, flow, self.log)
+            if self.nest is not None:
+                self.tunnel.nest_from(self.nest[0], self.nest[1])
         elif self.flow is None or self.flow != flow:
             self.tunnel.set_flow(flow)
         self.flow = flow
@@ -435,6 +440,9 @@ class Evaluator:
             tun.restore(self.snapshots[key])
         tun.set_geometry(mesh)
         tun.set_forcing(*(forcing if forcing is not None else (None, None)))
+        if self.ground is not None:
+            # cells between the road and the underbody: below about 3 the gap flow is not resolved
+            self.ground_gap_cells = round(float((mesh.bbox()[0][2] - float(self.ground["z"])) / self.domain.dx), 2)
         warm = self.n_runs > 0
         self.n_runs += 1
         fid = self.fid
@@ -464,7 +472,8 @@ class Evaluator:
         u = flow.u_lat
         q_lat = 0.5 * u * u
         cd_raw = F[0] / (q_lat * a_lat)
-        blockage = af_lat / ((self.domain.shape[1] - 1) * (self.domain.shape[2] - 1))
+        cross = (self.nest[2] / dx ** 2) if self.nest is not None else (self.domain.shape[1] - 1) * (self.domain.shape[2] - 1)
+        blockage = af_lat / cross
         k = 1.0 + MASKELL_THETA * max(cd_raw * (a_lat / af_lat if af_lat > 0 else 1.0), 0.0) * blockage
         C_total = F[:3] / (q_lat * a_lat) / k
         C_mom = F[3:6] / (q_lat * a_lat * (self.ref_length / dx)) / k
@@ -618,7 +627,7 @@ def wall_model_on(re_sim, re_flight):
 
 
 def analyze(mesh: Mesh, conditions: Conditions, fidelity="draft", log=None, progress=None, wall_model=True,
-            ground=None):
+            ground=None, refine=False):
     """One cold run of a single mesh (wind axes, metres) at one condition. Returns the run,
     the forces at that speed and the setup, flattened (used by validation and tests)."""
     fid = FIDELITY[RETIRED.get(fidelity, fidelity)] if isinstance(fidelity, str) else fidelity
@@ -630,6 +639,9 @@ def analyze(mesh: Mesh, conditions: Conditions, fidelity="draft", log=None, prog
                    planform_area=projected_area(mesh, 2), ground=ground)
     re_fl = conditions.speed * L / air["nu"]
     re = min(re_fl, fid.re_cap)
+    if refine:
+        from .zoom import ZoomedEvaluator
+        ev = ZoomedEvaluator(ev)
     run = ev.run(mesh, re, progress=progress, re_flight=re_fl if wall_model else None)
     sp = at_speed(run, conditions.speed, air, L)
     out = dict(run)

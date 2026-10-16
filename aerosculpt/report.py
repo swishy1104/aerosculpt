@@ -327,10 +327,9 @@ wall model makes the wall shear the grid feels match the flight Reynolds number,
 boundary layers thin and attached as in the real flow.
 
 Accuracy. Measured against reference data on the validation page: sphere drag within 1-7 %, a
-face-on cube within about 10 %. Streamlined bodies and the Ahmed car body are still over-predicted
-on the draft and standard grids (about 2x for the Ahmed body with the wall model, 3x without):
-treat absolute drag of streamlined and car shapes as an upper estimate and compare designs on the
-same grid. Lift on thin wings from the CFD reads 50-66 % low and is indicative only; winged designs
+face-on cube within about 13 %, the Ahmed car body on a road within 6-14 % with the nested zoom grid
+(about 2x too high on the standard grid alone). Streamlined bodies are still over-predicted (about
+2.5x): treat their absolute drag as an upper estimate and compare designs on the same grid. Lift on thin wings from the CFD reads 50-66 % low and is indicative only; winged designs
 are optimized with a vortex-lattice wing model with section data instead (validated separately).
 
 Optimization. Each design is scored against the original at every (angle, speed) condition. The

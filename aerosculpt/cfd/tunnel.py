@@ -14,7 +14,7 @@ import numpy as np
 from . import kernels as K
 from .voxelize import build_links, voxelize_shells
 
-FLUID, SOLID, FARFIELD, OUTLET = 0, 1, 2, 3
+FLUID, SOLID, FARFIELD, OUTLET, NESTED = 0, 1, 2, 3, 4
 GROUND_CELLS = 3          # solid layers under the road: cells z = 0..2, the road surface at z = 2.5
 
 
@@ -247,6 +247,22 @@ class Tunnel:
         f = self.flow
         return (1.0 if f.wall_model else 0.0, max(f.wall_nu, 1e-12), self.zg,
                 self.inlet_speed() if self.zg >= 0 else 0.0)
+
+    def nest_from(self, mean, outer):
+        """Start from an outer grid's mean flow and hold it on this box's faces (nested refinement,
+        see zoom.py); the downstream face stays an outlet, a road stays a road."""
+        from .zoom import interpolate_mean
+        rho, ux, uy, uz = interpolate_mean(mean, outer, self.domain)
+        usq = 1.5 * (ux * ux + uy * uy + uz * uz)
+        for i in range(19):
+            cu = K.CX[i] * ux + K.CY[i] * uy + K.CZ[i] * uz
+            self.f[i] = (K.W[i] * rho * (1.0 + 3.0 * cu + 4.5 * cu * cu - usq)).astype(np.float32)
+        self.fn[:] = self.f
+        fl = self.flags
+        face = np.zeros(fl.shape, bool)
+        face[0, :, :] = face[:, 0, :] = face[:, -1, :] = face[:, :, 0] = face[:, :, -1] = True
+        face[-1, :, :] = False
+        fl[face & (fl != SOLID)] = NESTED
 
     def set_forcing(self, idx=None, F=None):
         """Body forces (lattice units, per step) on fluid cells, e.g. propeller actuator disks.

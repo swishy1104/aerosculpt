@@ -59,9 +59,10 @@ async function loadProjects() {
     const m = p.metrics || {};
     const body = h("div", { class: "body" });
     const tn = TUNNELS[(p.settings && p.settings.tunnel) || "general"] || TUNNELS.general;
-    body.innerHTML = `<div class="row spread"><div class="name grow" title="${esc(p.name)}">${esc(p.name)}</div>
+    body.innerHTML = `${p.team ? `<div class="small muted" style="margin-bottom:2px">${icon("users", "i sm")} ${esc(p.team.name)}${p.mine ? "" : ` · ${esc(p.owner || "")} · ${esc(p.team.role || "")}`}</div>` : ""}
+      <div class="row spread"><div class="name grow" title="${esc(p.name)}">${esc(p.name)}</div>
       <span class="tchip ${tn.cls}"><span class="tdot"></span>${tn.label}</span>
-      <button class="icon-btn" data-del aria-label="Delete project">${icon("trash")}</button></div>
+      ${p.mine === false ? "" : `<button class="icon-btn" data-del aria-label="Delete project">${icon("trash")}</button>`}</div>
       <div class="small muted" style="margin:2px 0 10px">${esc(p.filename)} · ${fmtInt(m.triangles)} triangles · ${timeAgo(p.updated_at)}</div>
       ${jobLine(p.last_job)}`;
     card.append(thumb, body);

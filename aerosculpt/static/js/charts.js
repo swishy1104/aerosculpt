@@ -29,7 +29,7 @@ function niceTicks(lo, hi, n = 4) {
 export function lineChart(container, series, opts = {}) {
   container.innerHTML = "";
   container.classList.add("chart");
-  const W = container.clientWidth || 340;
+  const W = Math.max(container.clientWidth || 340, 220);      // a hidden or collapsed panel measures 0
   const H = opts.height || 190;
   const m = { l: 46, r: 14, t: 10, b: opts.xLabel ? 34 : 22 };
   const pts = series.flatMap((s) => s.points).filter((p) => isFinite(p[1]));

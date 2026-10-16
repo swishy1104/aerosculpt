@@ -257,7 +257,8 @@ def gen_stream_collide():
         '    """One fused pull-stream + regularized-BGK/Smagorinsky collision step.',
         "",
         "    f holds post-collision populations of the previous step; fn receives the new ones.",
-        "    flags: 0 fluid, 1 solid, 2 far-field (Dirichlet equilibrium), 3 outlet.",
+        "    flags: 0 fluid, 1 solid, 2 far-field (Dirichlet equilibrium), 3 outlet, 4 nested-grid boundary",
+        "    (populations held where an outer grid's mean flow put them).",
         "    Wall links use Bouzidi linear interpolated bounce-back with fractions qtab[b, i], moving",
         "    walls (wall[b, 0:3]: the surface's own velocity, e.g. a spinning wheel) and, with wmod > 0,",
         "    a log-law wall model at the flight viscosity nu_w (wall[b, 3:6] normal, wall[b, 6] distance).",
@@ -296,6 +297,13 @@ def gen_stream_collide():
     ]
     for i in range(Q):
         L.append(f"                    fn[{i}, x, y, z] = feq_ff[{i}]")
+    L += [
+        "                    continue",
+        "                if t == 4:",
+        "                    # nested-grid boundary: populations held at the outer grid's mean flow",
+    ]
+    for i in range(Q):
+        L.append(f"                    fn[{i}, x, y, z] = f[{i}, x, y, z]")
     L += [
         "                    continue",
         "                b = bidx[x, y, z]",
@@ -433,6 +441,12 @@ def gen_cuda_stream_collide():
     ]
     for i in range(Q):
         L.append(f"        fn[{i}, x, y, z] = feq_ff[{i}]")
+    L += [
+        "        return",
+        "    if t == 4:",
+    ]
+    for i in range(Q):
+        L.append(f"        fn[{i}, x, y, z] = f[{i}, x, y, z]")
     L += [
         "        return",
         "    xm = x - 1 if x > 0 else nx - 1",

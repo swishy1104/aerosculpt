@@ -60,6 +60,19 @@ form.addEventListener("submit", async (ev) => {
 });
 
 if (page === "login") {
+  // single sign-on (OpenID Connect), when the server has it configured
+  api("/api/auth/sso").then((r) => {
+    if (!r.enabled) return;
+    $("#sso-btn").textContent = `Sign in with ${r.name}`;
+    $("#sso-box").classList.remove("hidden");
+  }).catch(() => {});
+  if (qs("sso_error")) {
+    const fe = $("#form-error");
+    fe.textContent = `Single sign-on failed: ${qs("sso_error")}`;
+    fe.classList.remove("hidden");
+  }
+}
+if (page === "login") {
   api("/api/plans").then((cat) => {
     if (cat.guest_demo) $("#guest-box").classList.remove("hidden");
     if (!cat.signup_open) $("#signup-link").classList.add("hidden");
