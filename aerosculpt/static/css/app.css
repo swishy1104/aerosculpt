@@ -355,7 +355,7 @@ footer.site a { color: var(--text-2); display: block; padding: 3px 0; }
 .avatar { width: 30px; height: 30px; border-radius: 50%; background: linear-gradient(135deg, #3987e5, #199e70); display: flex; align-items: center;
   justify-content: center; font-weight: 700; font-size: 13px; color: #fff; border: 0; cursor: pointer; }
 .page-app { padding: 28px 0 64px; }
-.trial-banner { display: flex; gap: 10px; align-items: center; justify-content: center; padding: 7px 14px; font-size: 13px;
+.trial-banner { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: center; padding: 7px 14px; font-size: 13px;
   background: var(--accent-soft); border-bottom: 1px solid var(--border); color: var(--text-2); text-align: center; }
 .trial-banner svg { color: var(--accent-ink); }
 .demo-banner { background: color-mix(in srgb, var(--warning) 14%, transparent); }

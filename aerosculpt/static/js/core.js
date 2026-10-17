@@ -477,7 +477,7 @@ function banners(me, after) {
     after.after(b);
     return;
   }
-  if (me.billing_mode === "demo") {
+  if (me.billing_mode === "demo" && !me.credits_off) {
     const b = h("div", { class: "trial-banner demo-banner", html: `${icon("alert")} Billing is in demo mode on this server: plans are granted without payment. Configure Stripe keys before launch.` });
     after.after(b);
   }
