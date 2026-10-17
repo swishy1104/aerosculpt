@@ -62,8 +62,7 @@ def main():
         tunnel.kill()
         sys.exit("The tunnel did not start (no trycloudflare.com address within 60 s). Check the internet connection.")
     threading.Thread(target=lambda: [None for _ in tunnel.stdout], daemon=True).start()   # keep draining its log
-    (ROOT / "tools" / "public_link.txt").write_text(url + "
-", encoding="utf-8")
+    (ROOT / "tools" / "public_link.txt").write_text(url + chr(10), encoding="utf-8")
     env = dict(os.environ, PUBLIC_URL=url, OPEN_ACCESS="0", PORT=str(PORT), HOST="127.0.0.1",
                ALLOWED_SIGNUP_EMAILS=",".join(emails) if emails else "nobody@invalid", OWNER_EMAILS=emails[0] if emails else "",
                FORWARDED_ALLOW_IPS="127.0.0.1", GUEST_DEMO="1" if demo else "0", ANONYMOUS_ACCESS="1" if open_site else "0")

@@ -67,8 +67,7 @@ def serve(exe, hostname, owner):
                ALLOWED_SIGNUP_EMAILS=owner or "nobody@invalid", OWNER_EMAILS=owner or "")
     env.setdefault("GUEST_HOURS", "72")
     tunnel = subprocess.Popen([exe, "tunnel", "--no-autoupdate", "run", "--url", f"http://127.0.0.1:{PORT}", TUNNEL])
-    (ROOT / "tools" / "public_link.txt").write_text(f"https://{hostname}
-", encoding="utf-8")
+    (ROOT / "tools" / "public_link.txt").write_text(f"https://{hostname}" + chr(10), encoding="utf-8")
     time.sleep(2)
     print("\n" + "=" * 64)
     print(f"  AeroSculpt is public at   https://{hostname}")
