@@ -32,20 +32,30 @@ jobs:
         run: |
           $env:AEROSCULPT_NO_BROWSER = "1"
           $p = Start-Process -FilePath dist\AeroSculpt\AeroSculpt.exe -PassThru -RedirectStandardOutput exe.log -RedirectStandardError exe.err
+          # the launch link is printed (and flushed) as soon as the app starts; the server itself logs to stderr
           $url = $null
-          foreach ($i in 1..90) {
+          foreach ($i in 1..60) {
             Start-Sleep -Seconds 2
-            if ((Test-Path exe.log) -and (Select-String -Path exe.log -Pattern "Uvicorn running" -Quiet)) {
-              $url = (Select-String -Path exe.log -Pattern "open\s+(http\S+)").Matches[0].Groups[1].Value
-              break
+            if (Test-Path exe.log) {
+              $m = Select-String -Path exe.log -Pattern "open\s+(http\S+)"
+              if ($m) { $url = $m.Matches[0].Groups[1].Value; break }
             }
             if ($p.HasExited) { break }
           }
-          Get-Content exe.log; if (Test-Path exe.err) { Get-Content exe.err }
-          if (-not $url) { throw "the app did not start within 180 s" }
-          $code = & curl.exe -s -o NUL -w "%{http_code}" "$url"
+          if (-not $url) {
+            if (Test-Path exe.log) { Get-Content exe.log }; if (Test-Path exe.err) { Get-Content exe.err }
+            throw "the app printed no launch link within 120 s"
+          }
+          Write-Host "launch link: $url"
+          $code = "000"
+          foreach ($i in 1..90) {
+            $code = & curl.exe -s -o NUL -w "%{http_code}" "$url"
+            if ($code -ne "000") { break }
+            Start-Sleep -Seconds 2
+          }
+          if (Test-Path exe.log) { Get-Content exe.log }; if (Test-Path exe.err) { Get-Content exe.err }
           Write-Host "launch link answered $code (302 = sets the launch cookie)"
-          $health = & curl.exe -s -o NUL -w "%{http_code}" ($url.Split("/app")[0] + "/api/health")
+          $health = & curl.exe -s -o NUL -w "%{http_code}" ($url.Substring(0, $url.IndexOf("/app")) + "/api/health")
           Write-Host "API without the launch cookie answered $health (401 = guarded)"
           Stop-Process -Id $p.Id -Force
           if ($code -ne "302") { throw "launch link did not answer as expected: $code" }
