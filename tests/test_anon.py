@@ -10,8 +10,8 @@ H = {"X-Requested-With": "AeroSculpt"}
 
 @pytest.fixture
 def anon(monkeypatch):
-    from aerosculpt.web import guest_limiter
-    guest_limiter.hits.clear()
+    from aerosculpt.web import anon_limiter
+    anon_limiter.hits.clear()
     monkeypatch.setattr(settings, "anonymous_access", True)
     yield
 

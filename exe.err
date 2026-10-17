@@ -1,0 +1,11 @@
+INFO:     Started server process [5940]
+INFO:     Waiting for application startup.
+2026-10-17 15:14:07,088 aerosculpt.web WARNING Billing is in DEMO mode: plans are granted without payment. Set STRIPE_SECRET_KEY for production.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8765 (Press CTRL+C to quit)
+forrtl: error (200): program aborting due to window-CLOSE event
+Image              PC                Routine            Line        Source             
+libifcoremd.dll    00007FFC204BDF54  Unknown               Unknown  Unknown
+KERNELBASE.dll     00007FFC958263ED  Unknown               Unknown  Unknown
+KERNEL32.DLL       00007FFC971ADDA7  Unknown               Unknown  Unknown
+ntdll.dll          00007FFC9811EE4C  Unknown               Unknown  Unknown

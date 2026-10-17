@@ -99,6 +99,7 @@ def current_user(request: Request, con, required=True):
 PREVIEW_EMAIL = "preview@aerosculpt.local"
 GUEST_DOMAIN = "guest.aerosculpt.local"
 guest_limiter = RateLimiter(limit=4, window_s=3600)
+anon_limiter = RateLimiter(limit=40, window_s=3600)      # new visitor workspaces per address per hour (shared addresses are common)
 ai_limiter = RateLimiter(limit=30, window_s=3600)
 
 
@@ -184,7 +185,7 @@ class AnonymousAccess:
             if row and row["expires_at"] > time.time():
                 return await self.app(scope, receive, send)
         ip = scope.get("client")[0] if scope.get("client") else "?"
-        if not guest_limiter.allow("anon:" + ip):
+        if not anon_limiter.allow("anon:" + ip):
             return await _refuse(send, path, 429, "Too many new visitors from this network. Try again in an hour.")
         age = int(settings.guest_hours * 3600)
         with transaction() as con:
