@@ -79,7 +79,8 @@ const AXES = ["+x", "-x", "+y", "-y", "+z", "-z"];
 const COMPUTE = catalog.compute || { backend: "cpu", seconds_per_run: { coarse: 8, draft: 20, standard: 95, high: 300 } };
 const PER_RUN_S = COMPUTE.seconds_per_run;
 // the public, account-free site has no credit meter: estimates show time only
-const creditTxt = (n, left = true) => (me.anonymous ? "" : ` · up to ${n} credit${n > 1 ? "s" : ""}${left ? ` · ${fmtInt(me.credits_left)} left` : ""}`);
+const noCredits = () => me.anonymous || me.credits_off;
+const creditTxt = (n, left = true) => (noCredits() ? "" : ` · up to ${n} credit${n > 1 ? "s" : ""}${left ? ` · ${fmtInt(me.credits_left)} left` : ""}`);
 const ZONE_TYPES = {
   protect: { label: "Protect", color: "--protect", help: "Geometry inside never moves", name: "Protected region" },
   wheel: { label: "Wheel", color: "--keep", help: "Spins on the rolling road; never reshaped", name: "Wheel", road: true },
@@ -716,7 +717,7 @@ function renderFidelity() {
   }
   const fd = catalog.fidelities[fidelity];
   const where = COMPUTE.backend === "gpu" ? `GPU${COMPUTE.device ? " (" + COMPUTE.device.replace(/^NVIDIA (GeForce )?/, "").replace(/ with Max-Q Design/, "") + ")" : ""}` : "CPU";
-  $("#fid-note").innerHTML = `${fmtInt(fd.cells)}-cell tunnel · ≈ ${fmtDuration(PER_RUN_S[fidelity])} per run on the ${esc(where)}${me.anonymous ? "" : ` · ${catalog.credits_per_run[fidelity]} credit${catalog.credits_per_run[fidelity] > 1 ? "s" : ""} per run`}`;
+  $("#fid-note").innerHTML = `${fmtInt(fd.cells)}-cell tunnel · ≈ ${fmtDuration(PER_RUN_S[fidelity])} per run on the ${esc(where)}${noCredits() ? "" : ` · ${catalog.credits_per_run[fidelity]} credit${catalog.credits_per_run[fidelity] > 1 ? "s" : ""} per run`}`;
 }
 
 function renderObjective() {
@@ -969,7 +970,7 @@ function estimates() {
       : advOn ? ` · <span style="color:var(--warning-text)">budget too small for the screening — lock some parameters or raise it</span>`
       : opt.iterations >= maxIter() ? ` · <span style="color:var(--warning-text)">your plan's design limit leaves some ideas untested</span>`
       : ` · Balanced or Thorough gets to every idea`) +
-    (!me.anonymous && credits > me.credits_left ? ` · <span style="color:var(--critical-text)">needs more credits</span>` : "");
+    (!noCredits() && credits > me.credits_left ? ` · <span style="color:var(--critical-text)">needs more credits</span>` : "");
   renderOptMode();
   renderVerify();
   summaries();
@@ -1181,7 +1182,7 @@ function renderStatus(j) {
   if (j.status === "queued") txt = `Waiting in queue${j.queue_position ? ` (position ${j.queue_position})` : ""}…`;
   if (j.status === "failed") txt = j.error || "Failed.";
   if (j.status === "done") txt = `${j.kind === "optimize" ? "Optimization" : "Simulation"} finished ${timeAgo(j.finished_at)} · ${
-    j.spec.tunnel === "supersonic" ? "surface methods" : `${j.cfd_runs} CFD run${j.cfd_runs === 1 ? "" : "s"}`}${me.anonymous ? "" : ` · ${j.credits_used} credit${j.credits_used === 1 ? "" : "s"}`}`;
+    j.spec.tunnel === "supersonic" ? "surface methods" : `${j.cfd_runs} CFD run${j.cfd_runs === 1 ? "" : "s"}`}${noCredits() ? "" : ` · ${j.credits_used} credit${j.credits_used === 1 ? "" : "s"}`}`;
   stage.textContent = txt;
   $("#log").textContent = j.log || "";
   renderLive(j);

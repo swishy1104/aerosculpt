@@ -243,6 +243,7 @@ def user_public(con, user):
         "app_version": VERSION, "build": build_id(), "local": settings.open_access,
         "guest": user["billing_source"] == "guest",
         "anonymous": settings.anonymous_access and user["billing_source"] == "guest",
+        "credits_off": plan["monthly_credits"] >= 10 ** 8,        # no credit meter on this site (the Public plan)
         "guest_expires_at": user["created_at"] + settings.guest_hours * 3600 if user["billing_source"] == "guest" else None,
         "has_api_key": bool(user["api_key_hash"]), "api_key_prefix": user["api_key_prefix"],
         "limits": {k: plan[k] for k in ("monthly_credits", "max_iterations", "fidelities", "objectives",
@@ -294,6 +295,43 @@ async def signup(request: Request):
         from .teams import accept_invites
         accept_invites(con, uid, email)
         start_session(con, request, uid, resp)
+    return resp
+
+
+async def claim(request: Request):
+    """Account-free site: turn this visitor's temporary workspace into a permanent account (its
+    projects included) with an email and password, so it is not cleared after GUEST_HOURS."""
+    if not settings.anonymous_access:
+        err(404, "Not found.")
+    with db() as con:
+        user = current_user(request, con)
+    if user["billing_source"] != "guest":
+        err(400, "This workspace already belongs to an account.")
+    data = await body_json(request)
+    email = normalize_email(data.get("email"))
+    pw = data.get("password") or ""
+    name = (data.get("name") or "").strip()[:80]
+    if not auth_limiter.allow("signup:" + _client_ip(request)):
+        err(429, "Too many attempts. Try again in a few minutes.")
+    if not valid_email(email):
+        err(400, "Enter a valid email address.", field="email")
+    p = password_problem(pw)
+    if p:
+        err(400, p, field="password")
+    if not data.get("accept_terms"):
+        err(400, "Please accept the Terms of Service.", field="accept_terms")
+    hashed = await run_in_threadpool(hash_password, pw)
+    resp = JSONResponse({"ok": True, "email": email})
+    with transaction() as con:
+        if con.execute("SELECT 1 FROM users WHERE email=? AND id!=?", (email, user["id"])).fetchone():
+            err(409, "An account with this email already exists. Sign in instead.", field="email")
+        con.execute("UPDATE users SET email=?, name=?, password_hash=?, billing_source=NULL, plan='public', plan_status='active' WHERE id=?",
+                    (email, name, hashed, user["id"]))
+        _apply_owner(con, user["id"], email)
+        audit(con, user["id"], "claimed", email)
+        from .teams import accept_invites
+        accept_invites(con, user["id"], email)
+        start_session(con, request, user["id"], resp)       # a full-length session instead of the visitor's
     return resp
 
 
@@ -2536,6 +2574,7 @@ routes = [
     Route("/api/auth/signup", signup, methods=["POST"]),
     Route("/api/auth/login", login, methods=["POST"]),
     Route("/api/auth/guest", guest, methods=["POST"]),
+    Route("/api/auth/claim", claim, methods=["POST"]),
     Route("/api/auth/logout", logout, methods=["POST"]),
     Route("/api/auth/forgot", forgot, methods=["POST"]),
     Route("/api/auth/reset", reset, methods=["POST"]),

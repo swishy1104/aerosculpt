@@ -268,6 +268,37 @@ export function confirmDialog(title, text, okLabel = "Confirm", danger = false) 
   });
 }
 
+/** Account-free site: an email and password turn this visitor's workspace into a permanent account. */
+export function claimDialog() {
+  const body = h("div");
+  body.innerHTML = `<p class="small">Your projects stay exactly as they are, and you can sign in from any browser.</p>
+    <label class="field"><span>Email</span><input type="email" id="cl-email" autocomplete="email"></label>
+    <label class="field"><span>Password <span class="muted">(10+ characters)</span></span><input type="password" id="cl-pw" autocomplete="new-password"></label>
+    <label class="check"><input type="checkbox" id="cl-terms"><span>I accept the <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy policy</a></span></label>
+    <p class="field-error hidden" id="cl-err"></p>`;
+  modal({
+    title: "Keep your projects", body,
+    actions: [{ label: "Not now", kind: "ghost" }, {
+      label: "Create account", kind: "primary",
+      onClick: async (btn) => {
+        busy(btn, true);
+        const errEl = body.querySelector("#cl-err");
+        try {
+          const r = await api("/api/auth/claim", { method: "POST", body: { email: body.querySelector("#cl-email").value.trim(),
+            password: body.querySelector("#cl-pw").value, accept_terms: body.querySelector("#cl-terms").checked } });
+          toast(`Account created for ${r.email}. Your projects are kept.`, "good");
+          setTimeout(() => location.reload(), 600);
+        } catch (e) {
+          errEl.textContent = e.message || "Could not create the account.";
+          errEl.classList.remove("hidden");
+          busy(btn, false);
+          return true;
+        }
+      },
+    }],
+  });
+}
+
 export function upgradePrompt(message) {
   if (_me && _me.anonymous) {
     modal({ title: "Not available on the public site", body: h("div", null, h("p", null, message),
@@ -351,7 +382,7 @@ export async function siteNav() {
   if (!anonymous) {
     try { me = await getMe(); } catch (e) { /* offline: show signed-out nav */ }
   }
-  if (anonymous) inner.querySelector('.nav-links a[href="/pricing"]')?.remove();
+  if (anonymous) document.querySelectorAll('a[href="/pricing"]').forEach((a) => a.remove());
   if (me || anonymous) {
     right.append(h("a", { class: "btn primary sm", href: "/app" }, anonymous ? "Open the app" : "Open app"));
   } else {
@@ -385,20 +416,24 @@ export function appTop(me, crumbs = []) {
   top.append(right);
   right.append(themeButton());
   const pill = h("a", { class: "credits-pill", href: "/app/billing", title: "Compute credits left this month" });
-  if (!me.anonymous) right.append(pill);
+  const noCredits = me.anonymous || me.credits_off;
+  if (!noCredits) right.append(pill);
   const planBadge = h("span", { class: "badge accent" });
   right.append(planBadge);
   const menu = h("div", { class: "menu" });
   const av = me.anonymous ? h("button", { class: "avatar", "aria-label": "Menu", html: icon("user") })
     : h("button", { class: "avatar", "aria-label": "Account menu" }, (me.name || me.email)[0].toUpperCase());
   const pop = h("div", { class: "menu-pop hidden" });
-  pop.innerHTML = `<div class="who">${me.anonymous ? "Your workspace" : `${esc(me.name || "")}<br>${esc(me.email)}`}</div>
+  pop.innerHTML = `<div class="who">${me.anonymous ? "Your workspace<br><span class=\"muted\">temporary</span>" : `${esc(me.name || "")}<br>${esc(me.email)}`}</div>
     <a href="/app">${icon("grid")}Projects</a>
-    ${me.guest ? "" : `<a href="/app/billing">${icon("card")}Plan &amp; billing</a>
+    ${me.anonymous ? `<button type="button" data-claim>${icon("user")}Create an account to keep your projects</button>
+    <a href="/login">${icon("key")}Sign in to an existing account</a>` : ""}
+    ${me.guest ? "" : `${noCredits ? "" : `<a href="/app/billing">${icon("card")}Plan &amp; billing</a>`}
     <a href="/app/account">${icon("user")}Account</a>`}
     <a href="/docs">${icon("book")}Documentation</a>
     ${me.is_admin ? `<a href="/admin">${icon("shield")}Admin</a>` : ""}
     ${me.preview || me.anonymous ? "" : `<button type="button" data-logout>${icon("logout")}${me.guest ? "Leave the demo" : "Sign out"}</button>`}`;
+  pop.querySelector("[data-claim]")?.addEventListener("click", () => claimDialog());
   av.addEventListener("click", (e) => { e.stopPropagation(); pop.classList.toggle("hidden"); });
   document.addEventListener("click", () => pop.classList.add("hidden"));
   pop.querySelector("[data-logout]")?.addEventListener("click", async () => {
@@ -408,6 +443,7 @@ export function appTop(me, crumbs = []) {
   menu.append(av, pop);
   right.append(menu);
   const update = (m) => {
+    if (!pill.isConnected) { planBadge.textContent = m.plan_name; return; }
     const used = m.usage.credits, total = m.limits.monthly_credits;
     const frac = Math.min(1, used / Math.max(total, 1));
     pill.innerHTML = `${icon("zap")}<span class="num">${fmtInt(m.credits_left)}</span> credits
@@ -423,7 +459,9 @@ export function appTop(me, crumbs = []) {
 function banners(me, after) {
   if (me.anonymous) {
     const hours = Math.max(1, Math.round((me.guest_expires_at - Date.now() / 1000) / 3600));
-    const b = h("div", { class: "trial-banner", html: `${icon("sparkles")} This is your own workspace. Export what you want to keep — it is cleared after about ${hours} hour${hours === 1 ? "" : "s"}.` });
+    const b = h("div", { class: "trial-banner", html: `${icon("sparkles")} This is your own workspace; it is cleared after about ${hours} hour${hours === 1 ? "" : "s"}.
+      <button type="button" class="btn sm" data-claim>Create an account to keep your projects</button>` });
+    b.querySelector("[data-claim]").addEventListener("click", () => claimDialog());
     after.after(b);
     return;
   }

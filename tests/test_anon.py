@@ -1,4 +1,6 @@
 """Account-free public use: every visitor gets a private temporary workspace without any sign-in."""
+import time
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -44,3 +46,32 @@ def test_anonymous_mode_is_off_by_default():
     assert settings.anonymous_access is False
     with TestClient(app) as c:
         assert c.get("/api/me").status_code == 401
+
+
+def test_visitor_keeps_projects_by_creating_an_account(anon):
+    from aerosculpt.security import auth_limiter
+    auth_limiter.hits.clear()
+    with TestClient(app) as a:
+        a.get("/app")
+        p = a.post("/api/projects", json={"template": "rocket", "name": "keep me"}, headers=H).json()
+        r = a.post("/api/auth/claim", json={"email": "keeper@example.com", "password": "Correct-Horse-9"}, headers=H)
+        assert r.status_code == 400 and r.json()["field"] == "accept_terms"
+        r = a.post("/api/auth/claim", json={"email": "Keeper@Example.com", "password": "Correct-Horse-9", "accept_terms": True}, headers=H)
+        assert r.status_code == 200, r.text
+        me = a.get("/api/me").json()
+        assert me["email"] == "keeper@example.com" and not me["anonymous"] and me["credits_off"] and me["plan"] == "public"
+        assert [q["name"] for q in a.get("/api/projects").json()] == ["keep me"]
+        assert a.post("/api/auth/claim", json={"email": "x@example.com", "password": "Correct-Horse-9", "accept_terms": True}, headers=H).status_code == 400
+        assert a.get(f"/api/projects/{p['id']}").status_code == 200
+    from aerosculpt.jobs import purge_guests
+    purge_guests(now=time.time() + 10 * 86400)          # a claimed workspace is never cleared
+    with TestClient(app) as b:
+        auth_limiter.hits.clear()
+        assert b.post("/api/auth/login", json={"email": "keeper@example.com", "password": "Correct-Horse-9"}, headers=H).status_code == 200
+        assert [q["name"] for q in b.get("/api/projects").json()] == ["keep me"]
+        assert b.get("/api/me").json()["anonymous"] is False
+        # the email is now taken
+        with TestClient(app) as c:
+            c.get("/app")
+            r = c.post("/api/auth/claim", json={"email": "keeper@example.com", "password": "Correct-Horse-9", "accept_terms": True}, headers=H)
+            assert r.status_code == 409
