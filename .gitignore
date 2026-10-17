@@ -27,3 +27,5 @@ tools/public_link.txt
 exe.log
 exe.err
 tools/public_site.log
+Start public site in background.bat
+Stop public site.bat
