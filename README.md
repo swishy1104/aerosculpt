@@ -26,8 +26,7 @@ Everything is checked against published data on the **Validation** page, and the
 
 ## Try it in 60 seconds
 
-**No install, no account:** open the public site (link in the release notes / the LinkedIn post), press
-*Rocket* and move a slider. The Flight tab reacts immediately. Drop your own `.ork` file to see your rocket.
+**No install, no account:** open **https://app.aerosculpt.app**, press *Rocket* and move a slider. The Flight tab reacts immediately. Drop your own `.ork` file to see your rocket.
 
 **On your own computer (Windows, no Python):** download `AeroSculpt-<version>-windows.zip` from the
 [latest release](https://github.com/swishy1104/aerosculpt/releases/latest), unzip, run `AeroSculpt.exe`.

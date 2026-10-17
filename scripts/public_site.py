@@ -53,7 +53,7 @@ def setup(exe, hostname):
         print("Signing in to Cloudflare: a browser window opens; choose the domain the site will use.")
         run([exe, "tunnel", "login"])
     out = subprocess.run([exe, "tunnel", "list", "--output", "json"], capture_output=True, text=True)
-    existing = [t for t in (json.loads(out.stdout) if out.returncode == 0 and out.stdout.strip() else []) if t.get("name") == TUNNEL]
+    existing = [t for t in ((json.loads(out.stdout) or []) if out.returncode == 0 and out.stdout.strip() else []) if t.get("name") == TUNNEL]
     if not existing:
         run([exe, "tunnel", "create", TUNNEL])
     run([exe, "tunnel", "route", "dns", "--overwrite-dns", TUNNEL, hostname])
