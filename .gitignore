@@ -26,3 +26,4 @@ tools/public_site.json
 tools/public_link.txt
 exe.log
 exe.err
+tools/public_site.log

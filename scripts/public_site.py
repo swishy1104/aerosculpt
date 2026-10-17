@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -66,7 +67,22 @@ def serve(exe, hostname, owner):
                ANONYMOUS_ACCESS="1", GUEST_DEMO="0", FORWARDED_ALLOW_IPS="127.0.0.1",
                ALLOWED_SIGNUP_EMAILS=owner or "nobody@invalid", OWNER_EMAILS=owner or "")
     env.setdefault("GUEST_HOURS", "72")
-    tunnel = subprocess.Popen([exe, "tunnel", "--no-autoupdate", "run", "--url", f"http://127.0.0.1:{PORT}", TUNNEL])
+    log = open(ROOT / "tools" / "public_site.log", "a", encoding="utf-8")
+    log.write(f"===== {time.strftime('%Y-%m-%d %H:%M:%S')} start https://{hostname} =====" + chr(10))
+
+    def spawn(cmd, tag, **kw):
+        """Run a child, echoing its output to this window and to tools/public_site.log."""
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, errors="replace", **kw)
+
+        def pump():
+            for line in proc.stdout:
+                sys.stdout.write(f"[{tag}] {line}")
+                sys.stdout.flush()
+                log.write(f"[{tag}] {line}")
+                log.flush()
+        threading.Thread(target=pump, daemon=True).start()
+        return proc
+    tunnel = spawn([exe, "tunnel", "--no-autoupdate", "run", "--url", f"http://127.0.0.1:{PORT}", TUNNEL], "tunnel")
     (ROOT / "tools" / "public_link.txt").write_text(f"https://{hostname}" + chr(10), encoding="utf-8")
     time.sleep(2)
     print("\n" + "=" * 64)
@@ -75,15 +91,25 @@ def serve(exe, hostname, owner):
     print(f"  Owner sign-in at /login   {owner or 'none (add --owner you@example.com)'}")
     print("  Keep this window open; Ctrl+C stops the site.")
     print("=" * 64 + "\n", flush=True)
-    app = subprocess.Popen([sys.executable, str(ROOT / "run.py"), "serve"], cwd=str(ROOT), env=env)
+    app = spawn([sys.executable, str(ROOT / "run.py"), "serve"], "app", cwd=str(ROOT), env=env)
     try:
-        app.wait()
+        while True:
+            time.sleep(2)
+            if app.poll() is not None:
+                print(f"The app stopped (exit code {app.returncode}). See tools/public_site.log.", flush=True)
+                log.write(f"===== app stopped, exit code {app.returncode} =====" + chr(10))
+                break
+            if tunnel.poll() is not None:
+                print(f"The tunnel stopped (exit code {tunnel.returncode}); restarting it.", flush=True)
+                log.write(f"===== tunnel stopped, exit code {tunnel.returncode}; restarting =====" + chr(10))
+                tunnel = spawn([exe, "tunnel", "--no-autoupdate", "run", "--url", f"http://127.0.0.1:{PORT}", TUNNEL], "tunnel")
     except KeyboardInterrupt:
-        pass
+        log.write("===== stopped with Ctrl+C =====" + chr(10))
     finally:
         for p in (app, tunnel):
             if p.poll() is None:
                 p.terminate()
+        log.close()
 
 
 def main():
