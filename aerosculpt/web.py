@@ -25,12 +25,13 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import billing, emailer
+from . import __version__, billing, build_id, emailer
 from .config import ensure_dirs, settings
 from .db import add_usage, audit, db, init_db, transaction, usage_for
 from .jobs import enqueue, job_dir, project_dir
 from .geometry import templates as T
-from .plans import ALL_ASPECTS, ALL_OBJECTIVES, CREDITS_PER_RUN, EXPLORE_FID, PLANS, check_spec, estimate_credits, plan_for
+from .plans import (ALL_ASPECTS, ALL_OBJECTIVES, CREDITS_PER_RUN, EXPLORE_FID, PLANS, ROCKET_OBJECTIVES, check_spec, estimate_credits,
+                    plan_for)
 from .security import (DUMMY_HASH, RateLimiter, auth_limiter, check_password, hash_password, new_api_key, new_token,
                        normalize_email, password_problem, token_hash, upload_limiter, valid_email)
 
@@ -39,7 +40,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 PAGES = STATIC / "pages"
 SESSION_COOKIE = "as_session"
 CSRF_HEADER = "x-requested-with"
-VERSION = "1.0.0"
+VERSION = __version__
 JOB_FILES = {"result.json", "history.json", "baseline_body.stl", "best_body.stl", "optimized.stl", "promising_body.stl", "promising.stl"}
 JOB_FIELD_FILE = re.compile(r"^fields_(baseline|best)_\d{1,3}\.json$")
 AXES = ("+x", "-x", "+y", "-y", "+z", "-z")
@@ -110,6 +111,16 @@ def _preview_user(con):
                        billing_source, is_admin) VALUES (?, 'Local preview', '!', ?, 'team', 'active', 'preview', 1)""",
                     (PREVIEW_EMAIL, time.time()))
         row = con.execute("SELECT * FROM users WHERE email=?", (PREVIEW_EMAIL,)).fetchone()
+    # the desktop app: features by the installed licence key (the free desktop tier without one)
+    want = settings.open_access_plan
+    if want == "license":
+        from . import license as lic
+        st = lic.installed()
+        want = st["plan"] if st.get("valid") else "desktop"
+    if want in PLANS and row["plan"] != want:
+        con.execute("UPDATE users SET plan=?, plan_status='active', billing_source=? WHERE id=?",
+                    (want, "license" if settings.open_access_plan == "license" else "preview", row["id"]))
+        row = con.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
     return row
 
 
@@ -150,6 +161,7 @@ def user_public(con, user):
         "current_period_end": user["current_period_end"], "cancel_at_period_end": bool(user["cancel_at_period_end"]),
         "billing_source": user["billing_source"], "billing_mode": settings.billing_mode,
         "preview": user["email"] == PREVIEW_EMAIL and settings.open_access,
+        "app_version": VERSION, "build": build_id(), "local": settings.open_access,
         "guest": user["billing_source"] == "guest",
         "guest_expires_at": user["created_at"] + settings.guest_hours * 3600 if user["billing_source"] == "guest" else None,
         "has_api_key": bool(user["api_key_hash"]), "api_key_prefix": user["api_key_prefix"],
@@ -415,6 +427,7 @@ async def plans(request: Request):
         "ai": ai_info(),
         "materials": MATERIALS,
         "hyper_objectives": dict(HYPER_OBJECTIVES),
+        "rocket_objectives": dict(ROCKET_GOALS),
         "prop_families": {k: {"name": f["name"], "note": f["note"]} for k, f in PROP_FAMILIES.items()},
     })
 
@@ -748,6 +761,7 @@ async def projects(request: Request):
     source_format = None
     tmpl_built = None
     cad_source = None
+    imported_meta, others = None, {}
     if ctype.startswith("application/json"):
         data = await body_json(request)
     if ctype.startswith("application/json") and data.get("template"):
@@ -762,9 +776,9 @@ async def projects(request: Request):
         preset = {"units": "m", "forward": "-x", "up": "+z", "tunnel": tunnel,
                   "envelope": dict(TEMPLATE_ENVELOPES[tid]),
                   "template": {"id": tid, "values": vals, "params": {}, "auto_ref": True},
-                  "optimize": {"objective": "drag_fixed_lift" if tid in ("uav", "wing") else "drag", "top_k": min(4, plan["max_top_k"]),
-                               "iterations": min(60, plan["max_iterations_panel"]) if tid != "rocket" else min(16, plan["max_iterations"]),
-                               "min_volume": 0.9, "max_volume": 1.3, "keep_stability": True}}
+                  "optimize": {"objective": "drag_fixed_lift" if tid in ("uav", "wing") else ("apogee" if tid == "rocket" else "drag"),
+                               "top_k": min(4, plan["max_top_k"]),
+                               "iterations": min(60, plan["max_iterations_panel"]), "min_volume": 0.9, "max_volume": 1.3, "keep_stability": True}}
         source_format = "template"
     elif ctype.startswith("application/json"):
         from .geometry.samples import SAMPLES
@@ -792,8 +806,11 @@ async def projects(request: Request):
         ext = filename.lower().rsplit(".", 1)[-1]
         from .geometry import cad
         cad_ok = ext in cad.CAD_EXTENSIONS and cad.available()
-        if ext not in ("stl", "obj") and not cad_ok:
-            err(400, "Upload STL, OBJ, STEP or IGES (3MF, PLY and glTF are converted in your browser).")
+        design = ext in ("ork", "rkt")
+        packed = ext == "aerosculpt"
+        if ext not in ("stl", "obj") and not cad_ok and not design and not packed:
+            err(400, "Upload STL, OBJ, STEP, IGES, OpenRocket (.ork) or RockSim (.rkt) files (3MF, PLY and glTF are converted in your browser)."
+                     + (" STEP/IGES need gmsh on this server." if ext in cad.CAD_EXTENSIONS else ""))
         limit = plan["max_upload_mb"] * 1024 * 1024
         chunks, size = [], 0
         async for chunk in request.stream():
@@ -802,6 +819,47 @@ async def projects(request: Request):
                 err(413, f"File is larger than the {plan['max_upload_mb']} MB limit of the {plan['name']} plan.", upgrade=True)
             chunks.append(chunk)
         raw = b"".join(chunks)
+        imported_meta = None
+        if packed:
+            # a project file from this app (any version): its model, source and settings
+            imported_meta, raw, model_name, others = _import_project_file(raw)
+            filename = model_name
+            name = (request.query_params.get("name") or imported_meta.get("name") or "Imported project")[:120]
+            source_format = (imported_meta.get("source_format") or "import")[:10]
+            src = next((n for n in others if n.startswith("source.")), None)
+            if src:
+                cad_source = (src.split(".", 1)[1], others[src])
+            preset = _clean_settings({k: v for k, v in (imported_meta.get("settings") or {}).items()
+                                      if k in ("units", "unit_scale", "forward", "up", "envelope", "zones", "tunnel", "propellers", "hyper",
+                                               "features", "ground", "rocket", "optimize", "fidelity")}, {"template": (imported_meta.get("settings") or {}).get("template")})
+            if preset.get("template") and preset["template"].get("id") in T.TEMPLATES:
+                preset["template"] = {"id": preset["template"]["id"], "values": T.clean(preset["template"]["id"], preset["template"].get("values") or {}),
+                                      "params": preset["template"].get("params") or {}, "auto_ref": True}
+            else:
+                preset.pop("template", None)
+            preset["import_notes"] = (imported_meta.get("settings") or {}).get("import_notes") or []
+            preset["imported_from"] = {"app": imported_meta.get("app"), "exported_at": imported_meta.get("exported_at")}
+        if design:
+            # an OpenRocket / RockSim design becomes a rocket template project with its masses and motor
+            from .rocket.ork import parse_design
+            from .web_rocket import clean_rocket
+            try:
+                imp = await run_in_threadpool(parse_design, raw, filename)
+            except Exception as e:  # noqa: BLE001 - the parser's message is the user-facing one
+                err(400, f"Could not read the rocket design: {e}")
+            vals = T.clean("rocket", imp["template_values"])
+            cad_source = (ext, raw)
+            tmpl_built, raw = await run_in_threadpool(_template_files, "rocket", vals)
+            name = (request.query_params.get("name") or imp.get("name") or filename.rsplit(".", 1)[0])[:120]
+            filename = "rocket.stl"
+            source_format = ext
+            tunnel = request.query_params.get("tunnel")
+            preset = {"units": "m", "forward": "-x", "up": "+z", "tunnel": tunnel if tunnel in TUNNELS else "general",
+                      "envelope": dict(TEMPLATE_ENVELOPES["rocket"]),
+                      "template": {"id": "rocket", "values": vals, "params": {}, "auto_ref": True},
+                      "rocket": clean_rocket(imp.get("rocket") or {}, {}), "import_notes": imp.get("notes") or [],
+                      "optimize": {"objective": "apogee", "top_k": min(4, plan["max_top_k"]),
+                                   "iterations": min(60, plan["max_iterations_panel"]), "min_volume": 0.9, "max_volume": 1.3}}
         if cad_ok:
             # CAD: tessellate once on the server (OpenCASCADE via gmsh), keep the original beside it
             cad_source = (ext, raw)
@@ -811,10 +869,11 @@ async def projects(request: Request):
                 err(400, f"Could not read the CAD file: {e}")
             filename = filename.rsplit(".", 1)[0] + ".stl"
             source_format = ext
-        preset = None
-        tunnel = request.query_params.get("tunnel")
-        if tunnel in TUNNELS:
-            preset = {"tunnel": tunnel}
+        if not design and not packed:
+            preset = None
+            tunnel = request.query_params.get("tunnel")
+            if tunnel in TUNNELS:
+                preset = {"tunnel": tunnel}
     try:
         n_faces, units, forward, up, met = await run_in_threadpool(_inspect_model, raw, filename)
     except ValueError as e:
@@ -829,6 +888,10 @@ async def projects(request: Request):
     (pdir / f"model.{ext}").write_bytes(raw)
     if cad_source is not None:
         (pdir / f"source.{cad_source[0]}").write_bytes(cad_source[1])
+    if imported_meta is not None:
+        for n, data_ in others.items():
+            if n in ("flight_log.json", "thumb.png"):
+                (pdir / n).write_bytes(data_)
     st = {"units": units, "forward": forward, "up": up, "envelope": dict(DEFAULT_ENVELOPE), "zones": []}
     if preset:
         st.update(preset)
@@ -1158,6 +1221,9 @@ def _clean_settings(data, old):
         st["propellers"] = _clean_props(data["propellers"])
     if isinstance(data.get("hyper"), dict):
         st["hyper"] = _clean_hyper(data["hyper"], st.get("hyper") or {})
+    if isinstance(data.get("rocket"), dict):
+        from .web_rocket import clean_rocket
+        st["rocket"] = clean_rocket(data["rocket"], st.get("rocket") or {})
     if "optimize" in data and isinstance(data["optimize"], dict):
         st["optimize"] = data["optimize"]
     if isinstance(data.get("template"), dict):
@@ -1283,7 +1349,7 @@ def _build_spec(data, project, plan):
     except KeyError:
         err(400, "Unknown fidelity.")
     st = _clean_settings({k: data[k] for k in ("units", "unit_scale", "forward", "up", "envelope", "zones", "tunnel", "propellers",
-                                                "hyper", "features", "ground") if k in data}, st)
+                                                "hyper", "features", "ground", "rocket") if k in data}, st)
     st = _migrate(st)
     tunnel = st.get("tunnel", "general")
     if tunnel == "supersonic":
@@ -1310,6 +1376,17 @@ def _build_spec(data, project, plan):
     if tm:
         spec["template"] = {"id": tm["id"], "values": tm["values"]}
     spec["features"] = _job_features(st, tm, kind)
+    rocket_goal = False
+    if tm and tm["id"] == "rocket":
+        # the flight model's inputs travel with the job (the worker has no user context): motor
+        # curve included, so a rocket reshaped for drag is still checked for stability and flutter
+        from .web_rocket import clean_rocket, motor_from_settings
+        from .rocket.motors import motor_for_diameter
+        rk = clean_rocket({}, st.get("rocket") or {})
+        motor = motor_from_settings(project["user_id"], rk) or motor_for_diameter(float(tm["values"].get("diameter", 0.1)))
+        rk["motor_data"] = motor.public()
+        rk["envelope_speeds"] = speeds
+        spec["rocket"] = rk
     if kind == "optimize":
         o = data.get("optimize") or {}
         auto = not tm and o.get("mode", "auto") == "auto"
@@ -1319,6 +1396,9 @@ def _build_spec(data, project, plan):
         if not tm and not aspects and not _free_features(spec["features"]):
             err(400, "Choose at least one design aspect to improve, or unlock a shape-feature dimension.")
         objective = o.get("objective", "drag")
+        if objective in ROCKET_OBJECTIVES and not (tm and tm["id"] == "rocket"):
+            err(400, "Apogee and rocket-drag goals need a rocket template project (or an imported OpenRocket / RockSim design).")
+        rocket_goal = objective in ROCKET_OBJECTIVES
         if tm and tm["id"] in ("uav", "wing"):
             objective = "drag_fixed_lift"
         elif objective == "drag_fixed_lift":
@@ -1362,9 +1442,9 @@ def _build_spec(data, project, plan):
     L = _body_length(project, st) or 1.0
     _, groups = reynolds_groups(speeds, L, isa(env["altitude"])["nu"], FIDELITY[fid].re_cap)
     mach = max(speeds) / isa(env["altitude"])["a"]
-    if mach > 1.2:
+    if mach > 1.2 and not rocket_goal:
         err(400, f"{max(speeds):g} m/s is Mach {mach:.2f}; this tunnel stops at Mach 1.2. "
-                 "Use the Supersonic tunnel above that.")
+                 "Use the Supersonic tunnel above that (the rocket flight model has no speed limit).")
     return spec, st, len(groups)
 
 
@@ -1674,7 +1754,9 @@ async def fusion_status(request: Request):
     from . import fusion
     with db() as con:
         user = current_user(request, con)
-    if not settings.fusion_bridge or not user["is_admin"]:
+    from .local import local_settings
+    on = settings.fusion_bridge or (settings.open_access and local_settings().get("fusion_bridge"))
+    if not on or not user["is_admin"]:
         return JSONResponse({"enabled": False})
     return JSONResponse({"enabled": True, **await run_in_threadpool(fusion.status)})
 
@@ -2092,6 +2174,140 @@ async def billing_webhook(request: Request):
 
 
 # ---- admin -------------------------------------------------------------------------------------
+# ---- desktop: licence, local settings, updates, diagnostics, project files -------------------------
+async def license_info(request: Request):
+    from . import license as lic
+    with db() as con:
+        user = current_user(request, con)
+    if settings.open_access:
+        return JSONResponse({"local": True, **lic.installed()})
+    plan = plan_for(user)
+    return JSONResponse({"local": False, "can_issue": plan["key"] in lic.PLANS, "plan": plan["key"],
+                         "signing": lic.load_private_key() is not None})
+
+
+async def license_issue(request: Request):
+    """A desktop licence key for a Pro or Team subscriber (bound to their email), valid to the end of
+    the billing period plus the grace period, or a year for an owner."""
+    from . import license as lic
+    with db() as con:
+        user = current_user(request, con)
+        plan = plan_for(user)
+        if plan["key"] not in lic.PLANS:
+            err(403, "Desktop licence keys come with Pro and Team.", upgrade=True)
+        now = time.time()
+        end = user["current_period_end"]
+        expires = end if end and end > now + 7 * 86400 else now + 365 * 86400
+        try:
+            key = lic.issue(user["email"], plan["key"], expires_at=expires)
+        except lic.LicenseError as e:
+            err(503, str(e))
+        audit(con, user["id"], "license_issued", plan["key"])
+    return JSONResponse({"key": key, "plan": plan["key"], "expires": expires, "email": user["email"]})
+
+
+async def local_license(request: Request):
+    from . import license as lic
+    if not settings.open_access:
+        err(404, "Not found.")
+    with db() as con:
+        current_user(request, con)
+    if request.method == "DELETE":
+        lic.remove()
+        return JSONResponse(lic.installed())
+    data = await body_json(request)
+    try:
+        st = lic.install(str(data.get("key") or ""))
+    except lic.LicenseError as e:
+        err(400, f"That key cannot be used: {e}")
+    return JSONResponse(st)
+
+
+async def local_settings_api(request: Request):
+    from .local import local_settings, save_local_settings
+    if not settings.open_access:
+        err(404, "Not found.")
+    with db() as con:
+        current_user(request, con)
+    if request.method == "GET":
+        return JSONResponse(local_settings())
+    data = await body_json(request)
+    return JSONResponse(save_local_settings(data if isinstance(data, dict) else {}))
+
+
+async def update_check(request: Request):
+    from .local import local_settings
+    from . import update
+    with db() as con:
+        current_user(request, con)
+    enabled = settings.check_updates or (settings.open_access and local_settings().get("check_updates"))
+    if not enabled:
+        return JSONResponse({"enabled": False, "current": VERSION})
+    force = request.query_params.get("force") == "1"
+    return JSONResponse({"enabled": True, **await run_in_threadpool(update.check, VERSION, 6.0, force)})
+
+
+async def diagnostics_bundle(request: Request):
+    from .diagnostics import bundle
+    with db() as con:
+        user = current_user(request, con)
+    if not (user["is_admin"] or settings.open_access):
+        err(403, "Admins only.")
+    data = await run_in_threadpool(bundle)
+    name = f"aerosculpt-diagnostics-{time.strftime('%Y%m%d-%H%M')}.zip"
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+async def third_party_notices(request: Request):
+    for f in (Path(__file__).resolve().parents[1] / "THIRD-PARTY-NOTICES.txt", Path(getattr(__import__("sys"), "_MEIPASS", ".")) / "THIRD-PARTY-NOTICES.txt"):
+        if f.exists():
+            return Response(f.read_bytes(), media_type="text/plain; charset=utf-8")
+    return Response("Third-party notices are generated at build time (scripts/third_party_notices.py).", media_type="text/plain")
+
+
+PROJECT_FILE_FORMAT = "aerosculpt-project"
+
+
+async def project_export(request: Request):
+    """A project as one file: the model, its source (CAD / OpenRocket), settings and metrics, in a
+    format later versions keep opening."""
+    import io
+    import zipfile
+    with db() as con:
+        user = current_user(request, con)
+        p = _get_project(con, user, request.path_params["pid"])
+    pdir = project_dir(p["id"])
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("project.json", json.dumps({"format": PROJECT_FILE_FORMAT, "version": 1, "app": VERSION, "build": build_id(),
+                                               "name": p["name"], "filename": p["filename"], "source_format": p["source_format"],
+                                               "settings": json.loads(p["settings"] or "{}"), "metrics": json.loads(p["metrics"] or "{}"),
+                                               "exported_at": time.time()}, indent=1))
+        for f in pdir.iterdir():
+            if f.is_file() and (f.name.startswith(("model.", "source.")) or f.name in ("flight_log.json", "thumb.png")):
+                z.write(f, f.name)
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{_safe_name(p["name"])}.aerosculpt"'})
+
+
+def _import_project_file(raw):
+    """-> (project.json dict, model bytes, model filename, {other files})"""
+    import io
+    import zipfile
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw))
+        meta = json.loads(z.read("project.json").decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        err(400, "Not an AeroSculpt project file.")
+    if meta.get("format") != PROJECT_FILE_FORMAT:
+        err(400, "Not an AeroSculpt project file.")
+    model_name = next((n for n in z.namelist() if n.startswith("model.")), None)
+    if not model_name:
+        err(400, "The project file has no model.")
+    others = {n: z.read(n) for n in z.namelist() if n != "project.json" and n != model_name and len(z.getinfo(n).filename) < 80}
+    return meta, z.read(model_name), model_name, others
+
+
 async def admin_stats(request: Request):
     with db() as con:
         user = current_user(request, con)
@@ -2224,8 +2440,21 @@ async def lifespan(app):
     yield
 
 
+from .local import LocalGuard
+from .web_rocket import ROUTES as ROCKET_ROUTES
+from .rocket.runner import OBJECTIVES as ROCKET_GOALS
+
 routes = [
     Route("/api/health", health),
+    *ROCKET_ROUTES,
+    Route("/api/license", license_info),
+    Route("/api/license/issue", license_issue, methods=["POST"]),
+    Route("/api/local/license", local_license, methods=["POST", "DELETE"]),
+    Route("/api/local/settings", local_settings_api, methods=["GET", "POST"]),
+    Route("/api/update", update_check),
+    Route("/api/diagnostics", diagnostics_bundle),
+    Route("/api/projects/{pid}/export", project_export),
+    Route("/third-party-notices", third_party_notices),
     Route("/api/auth/signup", signup, methods=["POST"]),
     Route("/api/auth/login", login, methods=["POST"]),
     Route("/api/auth/guest", guest, methods=["POST"]),
@@ -2295,7 +2524,7 @@ routes = [
 
 app = Starlette(
     routes=routes,
-    middleware=[Middleware(SecurityHeaders), Middleware(GZipMiddleware, minimum_size=1024)],
+    middleware=[Middleware(LocalGuard), Middleware(SecurityHeaders), Middleware(GZipMiddleware, minimum_size=1024)],
     exception_handlers={404: not_found, ApiError: api_error, Exception: server_error},
     lifespan=lifespan,
 )

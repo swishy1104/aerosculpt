@@ -27,7 +27,7 @@
     <a href="#rockets">rockets</a> · <a href="#uav">fixed-wing UAVs</a> ·
     <a href="#rc">RC tunnel</a> · <a href="#supersonic">Supersonic tunnel</a> · <a href="#accuracy">accuracy tools</a> · <a href="#cars">cars</a> ·
     <a href="#cad">CAD and Fusion</a> · <a href="#structure">structure and mission</a> · <a href="#outputs">reports and exports</a> ·
-    <a href="#teams">teams</a> · <a href="#desktop">desktop app</a> · <a href="#physics">physics</a> · <a href="#limits">limits</a> · <a href="#api">API</a></p>
+    <a href="#teams">teams</a> · <a href="#desktop">desktop app</a> · <a href="#physics">physics</a> · <a href="#safety">safety</a> · <a href="#limits">limits</a> · <a href="#api">API</a></p>
 
   <h2 id="model">1. Model</h2>
   <ul>
@@ -187,14 +187,36 @@
   <p><b>Noses.</b> At supersonic speed the nose profile matters: the Supersonic tunnel marches second-order shock-expansion theory along each meridian, validated
     on cones and ogives. Subsonic, nose shape changes little as long as the flow stays attached, so the UAV template locks its nose profile by default.</p>
 
-  <h2 id="rockets">Rockets</h2>
-  <ul>
-    <li>Protect the fins (one box around the fin can) and any rail buttons; add a keep-inside cylinder for the motor tube.</li>
-    <li>Sweep 0–6° (or ±6°: symmetry makes the negative side free) across your boost speed range. Below the critical Mach number the drag is
-      compressibility-corrected; through Mach 1 it is an estimate, and above Mach 1.2 use the Supersonic tunnel.</li>
-    <li>Optimize <i>nose</i> and <i>tail</i> for lowest drag — or start from the rocket template so the optimizer changes the nose profile, length, tip radius and
-      boat-tail directly. Cm<sub>α</sub> is shown but is indicative only; confirm stability margin of the optimized design with a Barrowman-method tool such as OpenRocket.</li>
-  </ul>
+  <h2 id="rockets">Rockets: from a kit to a flight, step by step</h2>
+  <p>Rocket projects carry a <b>flight model</b> beside the wind tunnels: the component drag build-up, Barrowman stability, fin flutter and a flight
+    simulation with your motor, on a launch rail, in wind. It runs in milliseconds, so the <b>Flight</b> tab updates as you move a slider.</p>
+  <ol>
+    <li><b>Start</b> from the Rocket template on the Projects page, or drop an <b>OpenRocket (.ork)</b> or <b>RockSim (.rkt)</b> file: its nose, body, boat-tail,
+      fins, launch lug, part masses, parachute and motor are read in (anything that could not be reproduced is listed on the Flight tab).</li>
+    <li><b>Design parameters</b>: nose profile and length, body, boat-tail, fin shape (trapezoidal / swept / elliptical), fin count 3–6, fin position. Lock what
+      your kit fixes; unlock what you are free to change.</li>
+    <li><b>Rocket flight</b>: pick <b>Imperial</b> if you think in inches and feet. Masses either estimated from the geometry and typical materials (the
+      optimizer then pays for every gram it adds), measured (dry mass and balance point) or part by part. Choose the <b>motor</b> from the built-in list
+      (approximate curves shaped to the published impulse), upload the manufacturer's <code>.eng</code> / <code>.rse</code> file, or search ThrustCurve.org for the
+      certified curve. Set the rail length, launch angle, wind, site elevation and the parachute.</li>
+    <li><b>Read the Flight tab</b>: the verdict first (ready to fly, or what fails), then apogee, top speed and Mach, the static margin at liftoff and at top
+      speed (CP and CG drawn on the rocket; aim for 1–2 calibres), speed off the rail (about 15 m/s / 50 ft/s or more), the optimal ejection delay and the
+      nearest delay the motor offers, fin flutter speed against top speed, descent time and drift. Altitude and speed over time, the drag curve by part, and
+      every mass are below.</li>
+    <li><b>Optimize</b> with the goal <b>Highest apogee</b>: every design is flown on your motor and must keep the static margin, pass the flutter check and
+      leave the rail fast enough before it is scored. <b>Lowest drag (rocket drag model)</b> works the same on the drag build-up. <b>Lowest drag (CFD)</b>
+      compares shapes in the wind tunnel and still checks stability and flutter.</li>
+    <li><b>Compare with a real flight</b>: upload the altimeter's CSV (time, altitude in m or ft) and it is drawn over the simulated altitude.</li>
+    <li><b>Build and fly safely.</b> This is a simulation. Fly within the <a href="https://www.nar.org/safety-information/model-rocket-safety-code/" target="_blank" rel="noopener">NAR</a>
+      and <a href="https://www.tripoli.org/safetycode" target="_blank" rel="noopener">Tripoli</a> safety codes and your local rules: certified motors, a rail or rod,
+      a recovery system, a clear range, no flights into wind above the code's limit. The simulation does not replace a swing test, a range safety officer or
+      the motor manufacturer's recommendations. See <a href="#safety">safety and limits</a>.</li>
+  </ol>
+  <p><b>Accuracy.</b> The drag build-up follows Hoerner, Barrowman and the OpenRocket documentation; for a typical 3-fin kit it gives Cd ≈ 0.6 against
+    Gregorek's measured 0.45–0.75, and the Estes Alpha III on a C6-5 comes out within a few per cent of the published altitude. Stability and the integrator
+    match their references to a few per cent (<a href="/validation#rocket">validation</a>). Built-in motor curves are approximate: use the certified file for
+    the real thing. Not modelled: a 6-degree-of-freedom flight (the rocket is assumed to weathercock perfectly into the relative wind), base-drag reduction while the
+    motor burns, spin, clusters and stages, fins on a transition, and body lift at large angles.</p>
   <h2 id="uav">Fixed-wing UAVs</h2>
   <ul>
     <li>Set the reference area to the wing area and the reference length to the mean aerodynamic chord (the samples do this). Sweep from just below zero lift to beyond cruise angle (for example −2° to 8°) at your cruise speeds.</li>
@@ -312,7 +334,12 @@
   <h2 id="desktop">Desktop app</h2>
   <p>AeroSculpt also runs as a desktop app on your own computer: <code>AeroSculpt.exe</code> (or <code>python desktop.py</code>) starts it privately on
     127.0.0.1 with no sign-in, keeps projects in your user folder, simulates on your NVIDIA graphics card (or the CPU) and opens it in your browser.
-    Nothing leaves the computer, which suits CAD that cannot be uploaded. Build it with <code>pyinstaller desktop.spec</code>.</p>
+    Nothing leaves the computer unless you ask (motor search, update check), which suits CAD that cannot be uploaded. The app only answers to
+    localhost and opens through a launch link with a one-time token, so no website you visit can drive it. Without a licence key it runs the free desktop
+    tier; a <b>Pro or Team key</b> from your account page unlocks the rest (checked offline, with a 30-day grace period after it expires). The GPU pack (CUDA
+    runtime) is a separate download for NVIDIA cards; STEP/IGES import needs gmsh, which is GPL and not bundled. Build it with
+    <code>python scripts/build_desktop.py --gpu-pack --installer</code>; <code>AeroSculpt.exe --check</code> says what the computer can use; Account → Desktop
+    app saves a diagnostic bundle and checks for updates.</p>
 
   <h2 id="physics">How the solver works</h2>
   <p>AeroSculpt builds a uniform voxel wind tunnel sized to the body (about 1.5 near-field lengths upstream and to the sides, 4 downstream,
@@ -325,8 +352,15 @@
     at the highest Reynolds number the grid supports: pressure drag, lift and moments come from the simulation, while skin friction is
     re-scaled to flight conditions with the Prandtl–Schlichting flat-plate law. See <a href="/validation">validation</a> for accuracy.</p>
 
+  <h2 id="safety">Safety, responsibility and export control</h2>
+  <p>AeroSculpt is an engineering estimate, not a certification. Rocketry carries real risk: follow the NAR / Tripoli safety codes (or your national
+    association's), use certified motors, and have a range safety officer decide what flies. Vehicles you build from these results are your responsibility.
+    The methods implemented here are published, public-domain engineering methods (Hoerner, Barrowman, NACA reports, textbook gas dynamics); users remain
+    responsible for complying with the export-control and other laws that apply to their own projects and the data they upload.</p>
   <h2 id="limits">Limitations</h2>
   <ul>
+    <li>The rocket flight model is a point mass pointing into the relative wind (no 6-DOF dynamics, spin or coning); base drag is not reduced while the motor
+      burns; the transonic rise of the pressure drag is interpolated between Mach 0.8 and 1.3; stages and clusters are not modelled.</li>
     <li>The CFD is incompressible with compressibility corrections: sound to the critical Mach number, an estimate from there to Mach 1.2 (no shocks are
       simulated). No heat transfer in the General tunnel; propellers in the RC tunnel only.</li>
     <li>Boundary-layer transition is not predicted; very streamlined bodies at high Reynolds number come out conservative.</li>

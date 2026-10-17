@@ -55,6 +55,21 @@ def isa(altitude_m: float):
     return {"T": T, "p": p, "rho": rho, "mu": mu, "nu": mu / rho, "a": a}
 
 
+def _cap_cells(cells, log=None):
+    """On a GPU, no more cells than its free memory holds (gpu.BYTES_PER_CELL): a 4 GB card runs
+    the high grid, a 2 GB card gets a smaller one and a log line instead of an out-of-memory crash."""
+    from . import gpu
+    try:
+        cap = gpu.max_cells() if gpu.available() else None
+    except Exception:  # noqa: BLE001 - never let a memory query stop a run
+        cap = None
+    if cap and cells > cap:
+        if log:
+            log(f"grid capped at {cap:,} cells by the GPU's free memory ({gpu.memory_info()[0] / 1e9:.1f} GB)")
+        return int(cap)
+    return cells
+
+
 def cf_flat_plate(re: float):
     """Average skin-friction coefficient of a flat plate (Prandtl-Schlichting, transition 5e5)."""
     re = max(re, 10.0)
@@ -346,7 +361,7 @@ class Evaluator:
         L, W, H = (np.asarray(envelope_max) - np.asarray(envelope_min))
         self.nest = None          # (outer mean field, outer domain, outer cross-section m^2): a zoom grid
         self.domain = domain if domain is not None else plan_domain(
-            envelope_min, envelope_max, fidelity.cells, frontal_area, planform_area=planform_area,
+            envelope_min, envelope_max, _cap_cells(fidelity.cells, self.log), frontal_area, planform_area=planform_area,
             ground_z=None if ground is None else float(ground["z"]))
         dx = self.domain.dx
         self.wheels = ()

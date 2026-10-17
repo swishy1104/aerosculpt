@@ -246,6 +246,12 @@ def optimize(r):
         fid_x = dataclasses.replace(fid_x, u_lat=r.u_cap)
     lift = FixedLift(r, space, o.get("mass_kg"), bool(o.get("keep_stability", True)), structure=o.get("structure")) if winged else None
     wing_only = winged          # winged designs never need the CFD in the loop (see the module notes)
+    rocket_cfg = None
+    if tmpl and tmpl["id"] == "rocket" and isinstance(spec.get("rocket"), dict):
+        # a rocket reshaped for drag must still fly: static margin and fin flutter (rocket/stability.py)
+        from ..rocket.runner import motor_from_spec
+        rocket_cfg = ({**spec["rocket"], "check_speed": max(r.speeds)}, motor_from_spec(spec["rocket"]))
+        r.log("every candidate is checked for static margin and fin flutter (Barrowman, NACA TN 4197)")
 
     # grid sized once for every shape the bounds allow (extremes along each parameter); only their
     # extent matters, so feature unions skip the buried-face bookkeeping
@@ -284,8 +290,15 @@ def optimize(r):
 
         def fast_check(cand):
             why = own_fast(cand)
-            if why or lift is None:
+            if why:
                 return why
+            if rocket_cfg is not None:
+                from ..rocket.model import RocketModel
+                why = RocketModel(cand.values, rocket_cfg[0], rocket_cfg[1]).guard(fast=True)
+                if why:
+                    return why
+            if lift is None:
+                return None
             return lift.check(cand)      # stall and stability: a vortex lattice, ~0.1 s
 
         def full_check(cand):

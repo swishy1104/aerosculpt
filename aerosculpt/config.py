@@ -63,6 +63,16 @@ class Settings:
     # "Send to Fusion" through the FusionMCPBridge add-in: only where the app and Fusion share a
     # machine (local preview by default), never on a public deployment unless forced
     fusion_bridge = _bool("FUSION_BRIDGE", open_access)
+    # the desktop app and local preview (local.py): only localhost may talk to the app; with a launch
+    # token only the browser opened through the launch link may use it
+    local_token = os.environ.get("LOCAL_TOKEN", "").strip()
+    allowed_hosts = {h.strip().lower() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()}
+    # what the built-in local user may use: a plan name, or "license" (the installed desktop licence key,
+    # the free desktop tier without one)
+    open_access_plan = os.environ.get("OPEN_ACCESS_PLAN", "team").strip().lower()
+    # desktop licence signing (license.py): PEM text or a path; default data/license_private.pem
+    license_private_key = os.environ.get("LICENSE_PRIVATE_KEY", "").strip()
+    check_updates = _bool("CHECK_UPDATES", False)
     guest_hours = float(os.environ.get("GUEST_HOURS", "24"))
     guest_max_active = int(os.environ.get("GUEST_MAX_ACTIVE", "60"))
     # optional AI design assistant (aerosculpt/ai.py): any OpenAI-compatible chat endpoint, e.g. a

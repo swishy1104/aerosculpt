@@ -258,6 +258,10 @@ class Runner:
             raise JobCancelled()
 
     def write_json(self, name, obj):
+        if name == "result.json" and isinstance(obj, dict):
+            from .. import __version__, build_id
+            obj.setdefault("version", __version__)
+            obj.setdefault("build", build_id())
         (self.out / name).write_text(json.dumps(obj, separators=(",", ":"), default=_json_default))
 
     def make_evaluator(self, lo, hi, fid):

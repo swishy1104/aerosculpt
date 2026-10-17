@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 
 ALL_ASPECTS = ["nose", "tail", "section", "length", "camber", "fairing"]
-ALL_OBJECTIVES = ["drag", "ld", "drag_keep_lift", "drag_fixed_lift"]
+ALL_OBJECTIVES = ["drag", "ld", "drag_keep_lift", "drag_fixed_lift", "apogee", "rocket_drag"]
+ROCKET_OBJECTIVES = ["apogee", "rocket_drag"]          # the flight model: no CFD in the loop
 HYPER_OBJECTIVES = ["drag", "peak_temp"]
 TUNNELS = ["general", "rc", "supersonic"]
 
@@ -21,7 +22,7 @@ PLANS = {
     "lite": {
         "key": "lite", "name": "Lite", "price_month": 0, "tagline": "Free forever, for first looks",
         "monthly_credits": 40, "max_iterations": 12, "fidelities": ["draft"],
-        "objectives": ["drag", "drag_fixed_lift"], "max_aspects": 2, "aspects": ALL_ASPECTS, "max_top_k": 2,
+        "objectives": ["drag", "drag_fixed_lift", "apogee", "rocket_drag"], "max_aspects": 2, "aspects": ALL_ASPECTS, "max_top_k": 2,
         "max_angles": 3, "max_speeds": 4, "max_zones": 2, "max_propellers": 1, "max_iterations_panel": 30, "max_features": 4,
         "max_projects": 3, "max_upload_mb": 25, "max_triangles": 300_000,
         "export": False, "verify": False, "reports": False, "api": False,
@@ -60,6 +61,12 @@ PLANS = {
 }
 
 
+# the desktop app without a licence key: Lite's features, no credit meter (it is the user's own computer)
+PLANS["desktop"] = {
+    **PLANS["lite"], "key": "desktop", "name": "Desktop (free)", "tagline": "Your own computer, no licence key",
+    "monthly_credits": 10 ** 9, "max_projects": None, "max_upload_mb": 400, "max_triangles": 5_000_000, "hidden": True, "features": [],
+}
+
 # temporary accounts of the public guest demo (config.guest_demo); never listed or sold
 PLANS["guest"] = {
     **PLANS["lite"], "key": "guest", "name": "Guest demo", "tagline": "Temporary demo account",
@@ -95,6 +102,8 @@ def estimate_runs(spec: dict, re_groups: int = 1) -> dict:
     tid = (spec.get("template") or {}).get("id")
     if tid in ("wing", "uav") and spec.get("tunnel") != "supersonic":
         return {}                                   # winged designs: the wing model, no CFD
+    if o.get("objective") in ROCKET_OBJECTIVES:
+        return {}                                   # rockets on the flight model: no CFD
     per_angle = per_design // max(1, len(env.get("aoas", [0])))
     runs = {fid: per_design * CONFIRM_DESIGNS + per_angle * CONFIRM_SHIFTED}
     if True:
@@ -107,7 +116,7 @@ def estimate_runs(spec: dict, re_groups: int = 1) -> dict:
 
 
 def estimate_credits(spec: dict, re_groups: int = 1) -> int:
-    if spec.get("tunnel") == "supersonic":
+    if spec.get("tunnel") == "supersonic" or (spec.get("optimize") or {}).get("objective") in ROCKET_OBJECTIVES:
         designs = 1 + (int(spec.get("optimize", {}).get("iterations", 0)) + 1 if spec.get("kind") == "optimize" else 0)
         return 1 + max(0, designs - 1) // 10
     return max(1, math.ceil(sum(n * CREDITS_PER_RUN.get(f, 1) for f, n in estimate_runs(spec, re_groups).items())))
@@ -136,7 +145,8 @@ def check_spec(spec: dict, plan: dict):
         it = int(o.get("iterations", 0))
         if it < 1:
             raise ValueError("Choose at least one iteration.")
-        model_only = supersonic or (spec.get("template") or {}).get("id") in ("uav", "wing")   # no CFD runs in the loop
+        model_only = (supersonic or (spec.get("template") or {}).get("id") in ("uav", "wing")
+                      or o.get("objective") in ROCKET_OBJECTIVES)   # no CFD runs in the loop
         limit = plan["max_iterations_panel"] if model_only else plan["max_iterations"]
         if it > limit:
             raise PermissionError(f"{plan['name']} allows up to {limit} designs{' without CFD' if model_only else ''}.")

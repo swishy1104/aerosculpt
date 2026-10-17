@@ -1,4 +1,4 @@
-import { api, appTop, busy, esc, h, handleError, modal, requireAuth, timeAgo, toast, $ } from "/static/js/core.js";
+import { api, appTop, busy, esc, h, handleError, icon, modal, requireAuth, timeAgo, toast, $ } from "/static/js/core.js";
 
 let me = await requireAuth();
 appTop(me, [{ label: "Account" }]);
@@ -131,3 +131,73 @@ async function renderTeams() {
   });
 }
 renderTeams();
+
+
+// ---- desktop app: licence keys, local settings, diagnostics ------------------------------------------------------
+async function renderDesktop() {
+  const box = $("#desktop-body");
+  let lic;
+  try { lic = await api("/api/license"); } catch (e) { box.innerHTML = `<p class="small muted">${esc(e.message)}</p>`; return; }
+  const when = (ts) => new Date(ts * 1000).toLocaleDateString();
+  if (!lic.local) {
+    box.innerHTML = `<p class="small">AeroSculpt also runs as a <b>desktop app</b> on your own computer and GPU: nothing leaves the machine.
+        A licence key unlocks your plan's features there${lic.can_issue ? "" : " (Pro and Team)"}; without one it runs the free desktop tier.</p>
+      ${lic.can_issue ? (lic.signing ? `<button class="btn" id="lic-issue" type="button">Generate a desktop licence key</button>
+        <p class="small muted" style="margin:8px 0 0">Bound to your email, valid to the end of your billing period plus a 30-day grace period. Paste it in the desktop app under Account → Desktop app, or run <code>AeroSculpt.exe --license KEY</code>.</p>`
+        : `<p class="small muted">Licence signing is not configured on this server.</p>`)
+        : `<a class="btn" href="/app/billing?upgrade=pro">Upgrade to Pro for a desktop licence</a>`}
+      <p class="small muted" style="margin:10px 0 0">Downloads and the GPU pack: <a href="https://github.com/swishy1104/aerosculpt/releases" target="_blank" rel="noopener">releases</a>.</p>`;
+    const b = $("#lic-issue");
+    if (b) b.addEventListener("click", async () => {
+      try {
+        const r = await api("/api/license/issue", { method: "POST" });
+        const body = h("div");
+        body.innerHTML = `<p>Your ${esc(r.plan)} desktop key, valid until ${when(r.expires)}:</p><pre style="white-space:pre-wrap;word-break:break-all">${esc(r.key)}</pre>`;
+        modal({ title: "Desktop licence key", body, actions: [{ label: "Copy", kind: "primary", onClick: () => { navigator.clipboard.writeText(r.key); toast("Copied."); return true; } }, { label: "Done" }] });
+      } catch (err) { handleError(err); }
+    });
+    return;
+  }
+  let ls = {};
+  try { ls = await api("/api/local/settings"); } catch (e) { /* older server */ }
+  const status = lic.installed
+    ? (lic.valid ? `<span class="badge good"><span class="dot"></span>${esc(lic.plan)} licence</span> for ${esc(lic.email || "")}, until ${when(lic.expires)}${lic.why ? ` — ${esc(lic.why)}` : ""}`
+      : `<span class="badge bad"><span class="dot"></span>licence problem</span> ${esc(lic.why || "")}`)
+    : `<span class="badge"><span class="dot"></span>free desktop tier</span> — a Pro or Team key unlocks the rest.`;
+  box.innerHTML = `<p class="small">This copy runs on this computer (version ${esc(me.app_version || "")}, build ${esc(me.build || "")}).</p>
+    <p class="small" style="margin:6px 0 10px">${status}</p>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><input type="text" id="lic-key" placeholder="Paste a licence key" style="flex:1;min-width:220px">
+      <button class="btn sm" id="lic-install" type="button">Install key</button>${lic.installed ? `<button class="btn sm ghost" id="lic-remove" type="button">Remove</button>` : ""}</div>
+    <p class="small muted" style="margin:8px 0 14px">Keys come from the account page of your AeroSculpt subscription (Pro or Team).</p>
+    <span class="label">On this computer</span>
+    <label class="check"><input type="checkbox" id="ls-fusion" ${ls.fusion_bridge ? "checked" : ""}><span><b>Send to Fusion</b> <span class="muted">talk to the FusionMCPBridge add-in when Fusion runs here</span></span></label>
+    <label class="check"><input type="checkbox" id="ls-crash" ${ls.crash_reports !== false ? "checked" : ""}><span><b>Keep crash files</b> <span class="muted">for the diagnostic bundle; never sent by themselves</span></span></label>
+    <label class="check"><input type="checkbox" id="ls-update" ${ls.check_updates !== false ? "checked" : ""}><span><b>Check for updates</b> <span class="muted">asks GitHub for the latest release; nothing is installed by itself</span></span></label>
+    <label class="check"><input type="checkbox" id="ls-online" ${ls.online_motors !== false ? "checked" : ""}><span><b>Online motor search</b> <span class="muted">ThrustCurve.org, only when you press Search</span></span></label>
+    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">
+      <a class="btn sm ghost" href="/api/diagnostics" download>${icon("download")}Save a diagnostic bundle</a>
+      <button class="btn sm ghost" id="upd-check" type="button">${icon("refresh")}Check for updates now</button>
+      <a class="btn sm ghost" href="/third-party-notices" target="_blank">Third-party notices</a></div>
+    <p class="small muted" id="upd-status" style="margin:8px 0 0"></p>`;
+  $("#lic-install").addEventListener("click", async () => {
+    try { await api("/api/local/license", { method: "POST", body: { key: $("#lic-key").value.trim() } }); toast("Licence installed. Reload to see your plan.", "good"); location.reload(); }
+    catch (err) { handleError(err); }
+  });
+  const rm = $("#lic-remove");
+  if (rm) rm.addEventListener("click", async () => { try { await api("/api/local/license", { method: "DELETE" }); location.reload(); } catch (err) { handleError(err); } });
+  for (const [id, key] of [["ls-fusion", "fusion_bridge"], ["ls-crash", "crash_reports"], ["ls-update", "check_updates"], ["ls-online", "online_motors"]]) {
+    $("#" + id).addEventListener("change", async (e) => {
+      try { await api("/api/local/settings", { method: "POST", body: { [key]: e.target.checked } }); toast("Saved."); } catch (err) { handleError(err); }
+    });
+  }
+  $("#upd-check").addEventListener("click", async () => {
+    const st = $("#upd-status");
+    st.textContent = "Checking…";
+    try {
+      const u = await api("/api/update?force=1");
+      st.innerHTML = !u.enabled ? "Update checks are switched off." : u.error ? `Could not reach GitHub (${esc(u.error)}).`
+        : u.newer ? `Version ${esc(u.latest)} is available: <a href="${esc(u.url)}" target="_blank" rel="noopener">download</a>.` : `You have the latest version (${esc(u.current)}).`;
+    } catch (err) { st.textContent = err.message || "Check failed."; }
+  });
+}
+renderDesktop();

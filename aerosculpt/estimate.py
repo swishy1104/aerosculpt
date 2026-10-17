@@ -19,6 +19,7 @@ from .plans import EXPLORE_FID
 AXIS = {"x": 0, "y": 1, "z": 2}
 WARM = 0.55                    # a warm-started run (next design, same grid) costs about this much of a cold one
 WING_MODEL_S = 2.4             # one design on the wing model (UAV template, measured)
+ROCKET_MODEL_S = 0.4           # one design on the rocket flight model (measured)
 
 
 def _body_dims(metrics, settings):
@@ -53,6 +54,11 @@ def estimate(spec, metrics, settings_):
     tm = spec.get("template") or {}
     o = spec.get("optimize", {})
     lines = []
+    if kind == "optimize" and o.get("objective") in ("apogee", "rocket_drag"):
+        it = int(o.get("iterations", 30))
+        s = 6.0 + it * ROCKET_MODEL_S
+        lines.append(f"{it} designs on the rocket flight model (~{ROCKET_MODEL_S:g} s each)")
+        return {"seconds": s, "lines": lines, "explore_on": "rocket flight model", "body_cells": None}
     if kind == "optimize" and tm.get("id") in ("uav", "wing"):
         it = int(o.get("iterations", 30))
         s = 12.0 + it * WING_MODEL_S

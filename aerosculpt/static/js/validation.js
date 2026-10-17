@@ -30,6 +30,7 @@ const GROUPS = [
   ["rc", "RC tunnel", "Blade-element propeller model against UIUC wind-tunnel data; the actuator disk in the CFD against momentum theory."],
   ["supersonic", "Supersonic tunnel", "Surface methods against free-flight data, exact conical-flow theory, ogive wave-drag data, linear supersonic theory and heating correlations."],
   ["wing", "Wing model", "What the optimizer uses for wings and NACA sections: the vortex lattice against exact lifting-surface results and theory, NeuralFoil sections against NASA wind-tunnel data."],
+  ["rocket", "Rocket methods", "The flight model: drag build-up, Barrowman stability and the flight integrator against their published sources (Schlichting, Hoerner, Barrowman, Helmbold, Estes TR-10/TR-11) and the manufacturer's apogee for a classic kit."],
 ];
 const fmtVal = (v) => (Math.abs(v) >= 100 ? sig(v, 4) : sig(v, 3));
 function caseRow(c) {

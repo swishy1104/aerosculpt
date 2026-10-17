@@ -10,7 +10,7 @@ function pickTunnel(t) {
   tunnel = t;
   try { localStorage.setItem("as-tunnel", t); } catch (e) { /* private mode */ }
   document.querySelectorAll("#tunnel-pick .tp").forEach((b) => { b.classList.toggle("on", b.dataset.t === t); b.setAttribute("aria-checked", b.dataset.t === t); });
-  $("#drop-title").textContent = `Drop a CAD or mesh file to open it in the ${TUNNELS[t].label} tunnel`;
+  $("#drop-title").textContent = `Drop a CAD, mesh or rocket design file (.ork, .rkt) to open it in the ${TUNNELS[t].label} tunnel`;
   if (samples) renderSamples();
 }
 document.querySelectorAll("#tunnel-pick .tp").forEach((b) => b.addEventListener("click", () => pickTunnel(b.dataset.t)));
@@ -125,7 +125,7 @@ function sampleCard(s) {
 
 // ---- templates -------------------------------------------------------------------------
 const TEMPLATE_CARDS = [
-  { id: "rocket", icon: "rocket", title: "Rocket", text: "Nose profile (conical, ogive, elliptical, power law, von Kármán), nose length and tip radius, body, boat-tail and fins." },
+  { id: "rocket", icon: "rocket", title: "Rocket", text: "Nose, body, boat-tail and fins with motor, masses and launch site: stability, flutter, apogee and the whole flight, live. Or drop an OpenRocket / RockSim file above." },
   { id: "uav", icon: "plane", title: "Fixed-wing UAV", text: "Pod-and-boom fuselage, tapered wing with a NACA 4- or 5-digit section, sweep, dihedral, twist and position, conventional tail." },
   { id: "wing", icon: "plane", title: "Wing", text: "A wing on its own: span, chords, sweep, twist and the NACA section, optimized for drag at the lift you need." },
 ];

@@ -877,3 +877,17 @@ svg .ax { font: 10px var(--sans, sans-serif); fill: var(--muted); }
 .rounds { margin: 0 0 12px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
 .rounds li { display: flex; gap: 8px; align-items: baseline; }
 .rounds .rn { flex: none; font: 600 11px var(--mono); color: var(--muted); width: 56px; }
+
+/* rockets: the Flight tab */
+.rk-sil svg { width: 100%; height: auto; display: block; }
+.rk-sil .ax { font: 10px var(--font); fill: var(--muted); }
+.rk-checks { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; }
+.rk-checks li { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--text-2); }
+.rk-checks li svg { flex: none; width: 16px; height: 16px; margin-top: 1px; }
+.rk-checks li b { color: var(--text); font-weight: 600; }
+.rk-checks li.ok svg { color: var(--good-text); }
+.rk-checks li.bad svg { color: var(--critical-text); }
+.rk-checks li.warn svg { color: var(--warning); }
+.rk-items input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 13px; }
+.rk-items td { padding: 4px 6px; }
+#rk-chute-opts.muted { opacity: .5; }

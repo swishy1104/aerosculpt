@@ -42,7 +42,8 @@ def _page(plt, title, subtitle=None):
     fig.text(0.07, 0.955, title, fontsize=15, weight="bold", color=INK)
     if subtitle:
         fig.text(0.07, 0.935, subtitle, fontsize=9, color=MUTED)
-    fig.text(0.07, 0.03, "AeroSculpt engineering report", fontsize=7, color=MUTED)
+    from . import __version__, build_id
+    fig.text(0.07, 0.03, f"AeroSculpt {__version__} (build {build_id()}) engineering report", fontsize=7, color=MUTED)
     return fig
 
 
@@ -299,6 +300,54 @@ def build_pdf(job_dir: Path, spec: dict, result: dict, project_name: str, out: P
                     ax.legend(frameon=False)
                 save(fig)
                 plt.close(fig)
+
+        # ---- 5b. rocket: stability and flight -------------------------------------------------------------
+        rk = result.get("rocket")
+        if rk and rk.get("base"):
+            eb, eo = rk["base"], rk.get("best") or rk["base"]
+            fig = _page(plt, "Rocket: stability and flight", f"Motor {eb['motor'].get('manufacturer', '')} {eb['motor'].get('name', '')} · "
+                        f"rail {eb['launch']['rail_m']:g} m · wind {eb['launch']['wind_m_s']:g} m/s")
+            two = kind == "optimize"
+
+            def pair(f, b, o):
+                return f(b) + (f" → {f(o)}" if two else "")
+            st_b, st_o = eb["stability"], eo["stability"]
+            fl_b, fl_o = eb["flight"], eo["flight"]
+            rows = ["Stability (Barrowman)",
+                    ("Static margin at liftoff", pair(lambda e: f"{e['liftoff']['margin']:.2f} cal", st_b, st_o)),
+                    ("Static margin at top speed", pair(lambda e: f"{e['max_speed']['margin']:.2f} cal", st_b, st_o)),
+                    ("CP / CG at liftoff from the tip", pair(lambda e: f"{e['liftoff']['x_cp'] * 1000:.0f} / {e['liftoff']['x_cg'] * 1000:.0f} mm", st_b, st_o)),
+                    None, "Flight",
+                    ("Apogee", pair(lambda e: f"{e['apogee_m']:.0f} m", fl_b, fl_o)),
+                    ("Top speed", pair(lambda e: f"{e['max_speed']:.0f} m/s (Mach {e['max_mach']:.2f})", fl_b, fl_o)),
+                    ("Speed leaving the rail", pair(lambda e: f"{e['rail_exit_speed']:.1f} m/s", fl_b, fl_o)),
+                    ("Peak acceleration", pair(lambda e: f"{e['max_acceleration_g']:.1f} g", fl_b, fl_o)),
+                    ("Optimal delay", pair(lambda e: f"{e['optimal_delay']:.1f} s" if e.get("optimal_delay") is not None else "—", fl_b, fl_o)),
+                    ("Liftoff mass", pair(lambda e: f"{e['liftoff_mass'] * 1000:.0f} g", fl_b, fl_o))]
+            if eb.get("flutter"):
+                rows += [None, "Fins", ("Flutter speed / top speed", pair(lambda e: f"{e['flutter']['flutter_speed']:.0f} / {e['flight']['max_speed']:.0f} m/s", eb, eo))]
+            _table(fig, [0.07, 0.56, 0.86, 0.34], rows)
+            ax = fig.add_axes([0.1, 0.3, 0.38, 0.2])
+            for label, e, color in (("original", eb, C_BASE), ("optimized", eo, C_BEST)):
+                tr = e["flight"].get("trajectory") or []
+                if tr and (label == "original" or two):
+                    ax.plot([q["t"] for q in tr], [q["z"] for q in tr], color=color, label=label)
+            ax.set_title("Altitude", loc="left")
+            ax.set_xlabel("time (s)")
+            ax.set_ylabel("m")
+            ax.grid(alpha=0.25)
+            ax.legend(frameon=False, fontsize=7)
+            ax = fig.add_axes([0.58, 0.3, 0.36, 0.2])
+            for label, e, color in (("original", eb, C_BASE), ("optimized", eo, C_BEST)):
+                if label == "original" or two:
+                    ax.plot([q["mach"] for q in e["drag_curve"]], [q["cd"] for q in e["drag_curve"]], color=color, label=label)
+            ax.set_title("Drag coefficient", loc="left")
+            ax.set_xlabel("Mach")
+            ax.grid(alpha=0.25)
+            fig.text(0.07, 0.2, "Methods: component drag build-up (Hoerner / Barrowman / OpenRocket documentation), Barrowman centre of pressure with Mach", fontsize=7.5, color=MUTED)
+            fig.text(0.07, 0.18, "corrections, NACA TN 4197 fin flutter, point-mass flight on a rail with wind. Fly within the NAR / Tripoli safety codes.", fontsize=7.5, color=MUTED)
+            save(fig)
+            plt.close(fig)
 
         # ---- 6. methods and limitations -----------------------------------------------------------------
         fig = _page(plt, "Methods and limitations")

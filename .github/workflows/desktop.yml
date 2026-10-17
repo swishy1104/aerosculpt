@@ -1,0 +1,55 @@
+# Builds the Windows desktop app on a clean machine (no Anaconda, no CUDA), runs its self-check
+# and the API tests there, and publishes the zip on a version tag. The GPU pack is built from a
+# machine with the CUDA wheels installed (scripts/build_desktop.py --gpu-pack).
+name: desktop
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pyinstaller
+      - name: Tests on the CPU
+        run: python -m pytest -q -x tests/test_rocket.py tests/test_api.py tests/test_design.py
+        env:
+          AEROSCULPT_GPU: "0"
+      - name: Build (CPU-only base app)
+        run: python scripts/build_desktop.py --cpu-only --skip-tests
+        env:
+          SIGN_CMD: ${{ secrets.SIGN_CMD }}
+      - name: Self-check on a clean machine
+        run: dist\AeroSculpt\AeroSculpt.exe --check
+      - name: Serve and answer a request
+        shell: pwsh
+        run: |
+          $env:AEROSCULPT_NO_BROWSER = "1"
+          $p = Start-Process -FilePath dist\AeroSculpt\AeroSculpt.exe -PassThru -RedirectStandardOutput exe.log
+          Start-Sleep -Seconds 25
+          Get-Content exe.log
+          $url = (Select-String -Path exe.log -Pattern "open\s+(http\S+)").Matches[0].Groups[1].Value
+          $r = Invoke-WebRequest -Uri $url -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue
+          if ($r.StatusCode -ne 302) { throw "launch link did not answer: $($r.StatusCode)" }
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AeroSculpt-windows
+          path: |
+            dist/AeroSculpt-*-windows.zip
+            dist/AeroSculpt-Setup-*.exe
+          if-no-files-found: error
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/AeroSculpt-*-windows.zip
+            dist/AeroSculpt-Setup-*.exe
+          generate_release_notes: true

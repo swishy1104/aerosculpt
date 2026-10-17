@@ -52,6 +52,11 @@
       <div class="sec-b" id="params-box"></div>
     </div>
 
+    <div class="sec hidden" data-sec="rocket" data-template="1" data-rocket="1">
+      <div class="sec-h"><span class="n"></span><span class="t">Rocket flight</span><span class="s" id="s-rocket"></span><span class="chev" data-i="chev"></span></div>
+      <div class="sec-b" id="rocket-box"></div>
+    </div>
+
     <div class="sec closed adv-only" data-sec="features">
       <div class="sec-h"><span class="n"></span><span class="t">Shape features</span><span class="s" id="s-features"></span><span class="chev" data-i="chev"></span></div>
       <div class="sec-b" id="features-box"></div>
@@ -317,12 +322,14 @@
 
   <aside class="panel right" id="right" aria-label="Results">
     <div class="panel-head">
+      <button class="tab hidden" data-tab="flight" id="tab-flight-btn">Flight</button>
       <button class="tab on" data-tab="results">Performance</button>
       <button class="tab" data-tab="history">Optimization</button>
       <button class="tab" data-tab="runs">Runs</button>
       <span class="grow"></span>
       <button class="icon-btn" type="button" id="right-collapse" title="Hide the results panel" aria-label="Hide the results panel"><span data-i="chev"></span></button>
     </div>
+    <div id="tab-flight" class="hidden" style="padding:16px"></div>
     <div id="tab-results" style="padding:16px"></div>
     <div id="tab-history" class="hidden" style="padding:16px"></div>
     <div id="tab-runs" class="hidden" style="padding:16px"></div>

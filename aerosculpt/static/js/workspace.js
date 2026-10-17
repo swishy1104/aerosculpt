@@ -8,6 +8,7 @@ import { HyperPanel, degC, hyperCharts, hyperFaceFields, hyperHistoryHTML, hyper
 import { DesignParams, fixedLiftHTML, paramsTableHTML, strategyHTML } from "/static/js/design-params.js";
 import { FeatureEditor, featureChangesHTML } from "/static/js/features.js";
 import { accuracyHTML, compareRuns, exportsHTML, missionHTML, structureHTML, tradeoffHTML, wireExports, wireMission, wireTradeoff } from "/static/js/pro.js";
+import { ROCKET_GOALS, RocketPanel, flightTabHTML, rocketHistoryHTML, wireFlightTab } from "/static/js/tunnel-rocket.js";
 
 let me = await requireAuth();
 const pid = location.pathname.split("/").filter(Boolean).pop();
@@ -67,6 +68,9 @@ opt.top_k = Math.min(opt.top_k, me.limits.max_top_k || 8);
 let advOn = false;                         // "Show advanced options" (setAdvanced)
 opt.verify = null;              // the optimizer now confirms its best candidates itself
 const winged = () => !!S.template && (S.template.id === "uav" || S.template.id === "wing");
+const isRocket = () => !!S.template && S.template.id === "rocket";
+const rocketGoal = () => isRocket() && ROCKET_GOALS.includes(opt.objective);
+let rocket = null, flightEval = null;      // the rocket panel and its latest live evaluation
 const unvalidated = catalog.objectives_unvalidated || [];
 if (!(opt.objective in catalog.objectives) || unvalidated.includes(opt.objective)) opt.objective = "drag";
 let fidelity = me.limits.fidelities.includes(S.fidelity) ? S.fidelity : me.limits.fidelities[0];
@@ -726,6 +730,27 @@ function renderObjective() {
     sel.onchange = () => { opt.objective = sel.value; saveSettings(); summaries(); };
     return;
   }
+  if (isRocket()) {
+    const GOALS = { apogee: "Highest apogee (flight model)", rocket_drag: "Lowest drag (rocket drag model)", drag: "Lowest drag (CFD wind tunnel)" };
+    sel.innerHTML = Object.entries(GOALS).map(([k, l]) => `<option value="${k}" ${me.limits.objectives.includes(k) ? "" : "disabled"}>${esc(l)}</option>`).join("");
+    if (!(opt.objective in GOALS) || !me.limits.objectives.includes(opt.objective)) opt.objective = "apogee";
+    sel.value = opt.objective;
+    const note = () => {
+      $("#objective-note").classList.remove("hidden");
+      $("#objective-note").innerHTML = ROCKET_GOALS.includes(opt.objective)
+        ? `Flies every design on the motor, masses and site from <b>Rocket flight</b>; each must keep the static margin, pass the fin-flutter check and leave the rail fast
+           enough. No CFD, so a large budget costs one credit. The drag comes from the component build-up (see <a href="/validation#rocket" target="_blank">validation</a>).`
+        : `Shapes are compared in the CFD wind tunnel; every candidate is still checked for static margin and fin flutter with the flight model.`;
+    };
+    note();
+    sel.onchange = () => {
+      opt.objective = sel.value; note();
+      $("#iterations").max = maxIter(); opt.iterations = Math.min(opt.iterations, maxIter());
+      $("#iterations").value = opt.iterations; $("#iterations_o").textContent = String(opt.iterations);
+      renderEffort(); estimates(); saveSettings(); summaries();
+    };
+    return;
+  }
   if (winged()) {
     opt.objective = "drag_fixed_lift";
     sel.innerHTML = `<option value="drag_fixed_lift">${esc(catalog.objectives.drag_fixed_lift)}</option>`;
@@ -787,7 +812,7 @@ function slider(id, value, fmtOut, onChange) {
   el.addEventListener("input", () => { out.textContent = fmtOut(+el.value); onChange(+el.value); estimates(); });
   el.addEventListener("change", saveSettings);
 }
-const maxIter = () => (tunnel === "supersonic" || winged() ? me.limits.max_iterations_panel : me.limits.max_iterations);
+const maxIter = () => (tunnel === "supersonic" || winged() || rocketGoal() ? me.limits.max_iterations_panel : me.limits.max_iterations);
 $("#iterations").max = maxIter();
 opt.iterations = Math.min(opt.iterations, maxIter());
 $("#respect_limits").addEventListener("change", (e) => { opt.respect_limits = e.target.checked; saveSettings(); });
@@ -820,7 +845,7 @@ $("#hold_wing_area").addEventListener("change", (e) => { opt.hold_wing_area = e.
 
 function effortIters(k) {
   const max = maxIter();
-  const base = tunnel === "supersonic" || winged() ? { quick: 30, balanced: 80, thorough: 200 } : { quick: 32, balanced: 60, thorough: 120 };
+  const base = tunnel === "supersonic" || winged() || rocketGoal() ? { quick: 30, balanced: 80, thorough: 200 } : { quick: 32, balanced: 60, thorough: 120 };
   return Math.max(4, Math.min(max, base[k]));
 }
 function currentEffort() {
@@ -905,6 +930,16 @@ function estimates() {
   const aCred = Math.max(1, Math.ceil(aRuns * per + (gcheck ? 2 * (perDesign / aoas.length) * (catalog.credits_per_run[catalog.explore_fidelity[fidelity] || "coarse"] || 0.4) : 0)));
   const aSecs = time(perDesign, fidelity) * (zoom ? 3 : 1) * (gcheck ? 1.6 : 1);
   $("#analyze-est").innerHTML = `${aRuns} CFD run${aRuns > 1 ? "s" : ""} · <span id="an-time">≈ ${fmtDuration(aSecs)}</span> · up to ${aCred} credit${aCred > 1 ? "s" : ""} · ${fmtInt(me.credits_left)} left`;
+  if (rocketGoal()) {
+    const designs = opt.iterations + 2, rcred = 1 + Math.floor((designs - 1) / 10);
+    $("#run-optimize").innerHTML = `${icon("rocket")}Optimize for ${opt.objective === "apogee" ? "apogee" : "drag"}`;
+    $("#optimize-est").innerHTML = `up to ${opt.iterations} designs on the flight model (screening first) · <span id="opt-time">≈ ${fmtDuration(6 + opt.iterations * 0.4)}</span> · ${rcred} credit${rcred > 1 ? "s" : ""}`;
+    renderOptMode();
+    renderVerify();
+    summaries();
+    serverEstimate();
+    return;
+  }
   const xf = catalog.explore_fidelity[fidelity] || "coarse";
   // optional ideas are screened on/off first (their dimensions join only if one is kept); with CFD every
   // screened design also runs at a sub-cell shift (paired)
@@ -1012,6 +1047,11 @@ function readyChecks() {
       out.push({ s: "warn", t: `<b>Very slow for this size</b> (Reynolds number ${reMin.toExponential(1)}): the flow is sticky and laminar, unlike real flight. Check the real size and speed.` });
     } else out.push({ s: "ok", t: `Speeds ${sig(env.speed_min, 3)}–${sig(env.speed_max, 3)} m/s, ${env.aoa_count} angle${env.aoa_count > 1 ? "s" : ""}.` });
   }
+  if (isRocket() && flightEval) {
+    const bad = flightEval.checks.filter((c) => !c.ok);
+    if (bad.length) out.push({ s: "warn", t: `<b>Flight check:</b> ${bad.map((c) => esc(c.why)).join("; ")}.`, fix: [["Open Flight", () => switchTab("flight")], ["Rocket setup", () => openSection("rocket")]] });
+    else out.push({ s: "ok", t: `Stable (${sig(flightEval.stability.liftoff.margin, 2)} cal), the fins hold, apogee about ${Math.round(flightEval.flight.apogee_m)} m on the ${esc(flightEval.motor.name)}.` });
+  }
   if (!S.template && S.zones.some((z) => z.type === "design")) {
     out.push({ s: "warn", t: "<b>Design-only regions</b> squeeze whole-body changes into small zones, which fold where they fade out. To change one part, use a Shape feature instead.",
       fix: [["Open shape features", () => openSection("features")]] });
@@ -1041,6 +1081,7 @@ function renderReady() {
 
 function summaries() {
   renderReady();
+  if (isRocket()) $("#s-rocket").textContent = flightEval ? `${flightEval.motor.name} · ${Math.round(flightEval.flight.apogee_m)} m${flightEval.ok ? "" : " · check"}` : "…";
   if (tunnel === "supersonic") {
     $("#s-protect").textContent = S.zones.length ? `${S.zones.length} region${S.zones.length > 1 ? "s" : ""}` : "none";
     $("#s-simulate").textContent = "Panel";
@@ -1421,7 +1462,8 @@ async function showModelOnly(j, R) {
   viewer.setMode(vis.mode);
   updateToolbar();
   renderZones3D();
-  $("#vp-info").textContent = "Wing model (vortex lattice + NeuralFoil): no flow fields";
+  $("#vp-info").textContent = result.setup.method === "rocket model" ? "Rocket flight model (drag build-up + Barrowman): no flow fields"
+    : "Wing model (vortex lattice + NeuralFoil): no flow fields";
 }
 
 function renderCond() {
@@ -1522,10 +1564,18 @@ $("#snap").addEventListener("click", () => {
 // ---- right panel ------------------------------------------------------------------------------------------------
 function switchTab(name) {
   $$(".panel-head .tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === name));
-  for (const n of ["results", "history", "runs"]) $("#tab-" + n).classList.toggle("hidden", n !== name);
+  for (const n of ["results", "history", "runs", "flight"]) $("#tab-" + n).classList.toggle("hidden", n !== name);
   if (name === "history") renderHistoryTab();
+  if (name === "flight") renderFlightTab();
 }
 $$(".panel-head .tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+
+function renderFlightTab() {
+  const box = $("#tab-flight");
+  if (!isRocket()) return;
+  box.innerHTML = flightTabHTML(flightEval, (S.rocket || {}).units);
+  wireFlightTab(box, flightEval, (S.rocket || {}).units);
+}
 
 const kpi = (label, value, sub = "") => `<div class="kpi"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 const ldStr = (v, cl) => (v === null || v === undefined ? "—" : Math.abs(cl) < 0.005 ? "≈ 0" : sig(v, 3));
@@ -1621,6 +1671,8 @@ function renderResults() {
     ${resCells < 12 ? `<div class="notice warn" style="margin-top:10px">${icon("alert")}<div>Coarse for this airframe: its
       ${flat ? "mean chord" : "size across"} spans only ${Math.round(resCells)} cells at ${esc(result.setup.fidelity)} fidelity, so thin wings and fins are
       one-cell walls. Use a higher fidelity for final drag numbers.</div></div>` : ""}
+    ${result.setup.method === "rocket model" ? `<div class="notice good" style="margin-top:10px">${icon("rocket")}<div><b style="color:var(--text)">Rocket flight model.</b>
+      Drag from the component build-up and lift from Barrowman's normal-force slope; see the <b>Optimization</b> tab for the flight, and the <b>Flight</b> tab for the live design.</div></div>` : ""}
     ${result.setup.method === "wing model" ? `<div class="notice good" style="margin-top:10px">${icon("check")}<div><b style="color:var(--text)">Wing model.</b>
       Lift, induced drag and section drag from the vortex lattice and NeuralFoil, both checked against published data on the
       <a href="/validation#wing" target="_blank">validation page</a>; the pitching moment is not computed here.</div></div>` : ""}
@@ -1665,7 +1717,7 @@ function breakdown(s, p) {
 
 function details() {
   const st = result.setup;
-  if (st.method === "wing model") return "";
+  if (st.method === "wing model" || st.method === "rocket model") return "";
   const p = result.baseline.polar[cond.a];
   return `<details style="margin-top:14px"><summary class="label" style="cursor:pointer">Run details</summary><div class="kv" style="margin-top:8px">
     <span class="k">Fidelity</span><span class="v">${esc(st.fidelity)}</span>
@@ -1770,13 +1822,14 @@ function renderHistoryTab() {
   const env = r.envelope;
   const vr = r.volume_ratio;
   const fixedLift = r.objective === "drag_fixed_lift";
-  const headline = r.objective === "ld" ? fmtPct(r.improvement, 1, true) : fmtPct(fixedLift ? -r.improvement : r.drag_change, 1, true);
-  const good = r.objective === "ld" ? r.improvement > 0 : fixedLift ? r.improvement > 0 : r.drag_change < 0;
+  const apogee = r.objective === "apogee" && r.rocket;
+  const headline = apogee ? fmtPct(r.apogee_change, 1, true) : r.objective === "ld" ? fmtPct(r.improvement, 1, true) : fmtPct(fixedLift ? -r.improvement : r.drag_change, 1, true);
+  const good = apogee ? r.apogee_change > 0 : r.objective === "ld" ? r.improvement > 0 : fixedLift ? r.improvement > 0 : r.drag_change < 0;
   const st = r.strategy;
   const noReliable = st && !st.reliable;
   const head = isHyper() ? hyperHistoryHTML(r, cond) : `<div class="label">${esc(r.objective_label)}</div>
     <div class="hero-num">${headline}</div>
-    <div class="small muted" style="margin:4px 0 12px">${r.objective === "ld" ? "change in best L/D" : fixedLift ? `drag at the lift needed, averaged over ${env.speeds.length} speed${env.speeds.length > 1 ? "s" : ""}`
+    <div class="small muted" style="margin:4px 0 12px">${apogee ? `change in apogee on the ${esc(r.rocket.best.motor.manufacturer)} ${esc(r.rocket.best.motor.name)}` : r.objective === "ld" ? "change in best L/D" : fixedLift ? `drag at the lift needed, averaged over ${env.speeds.length} speed${env.speeds.length > 1 ? "s" : ""}`
       : "average change in drag across all " + env.aoas.length * env.speeds.length + " conditions"}
       ${st ? ` · ${st.designs_explored} designs explored` : ` · best design #${r.best_index} of ${r.history.length - 1}`}${r.verified ? ` · confirmed at ${esc(r.verified.fidelity)} fidelity` : ""}</div>
     ${r.rounds && r.rounds.length > 1 ? `<ul class="rounds">${r.rounds.map((q) => `<li><span class="rn">Round ${q.round}</span><span>${q.reliable
@@ -1822,7 +1875,7 @@ function renderHistoryTab() {
       ${row("Best L/D in envelope", r.baseline.summary.ld_max, r.best.summary.ld_max, (v) => (v ? sig(v, 3) : "—"), false, 0.05)}
       ${row("Mean drag in envelope", r.baseline.summary.drag_mean_N, r.best.summary.drag_mean_N, fmtForce)}
       <tr><td>Volume</td><td class="r">100%</td><td class="r">${fmtPct(vr, 1)}</td><td class="r">${fmtPct(vr - 1, 1, true)}</td></tr></tbody></table>
-    ${fixedLiftHTML(r)}`;
+    ${fixedLiftHTML(r)}${r.rocket ? rocketHistoryHTML(r, (S.rocket || {}).units) : ""}`;
   box.innerHTML = `${head}
     ${r.zones && r.zones.length ? `<p class="small" style="margin:10px 0 0">${icon("shieldlock", "i sm")} Respected ${r.zones.length} region${r.zones.length > 1 ? "s" : ""}: ${r.zones.map((z) => esc(z.name)).join(", ")}.</p>` : ""}
     ${r.template ? paramsTableHTML(r, catalog) : `<div class="section-title">Best design</div>
@@ -2007,7 +2060,7 @@ function applyTunnel(t, user = false) {
     : "The airspeeds and angles of attack to test. Each angle is one CFD run; extra airspeeds come from the same run, so they are free.";
   let n = 0;
   $$("#left .sec").forEach((sec) => {
-    const show = (!sec.dataset.tunnels || sec.dataset.tunnels.split(" ").includes(t)) && (!sec.dataset.template || !!S.template);
+    const show = (!sec.dataset.tunnels || sec.dataset.tunnels.split(" ").includes(t)) && (!sec.dataset.template || !!S.template) && (!sec.dataset.rocket || isRocket());
     sec.classList.toggle("hidden", !show);
     if (show) sec.querySelector(".sec-h .n").textContent = ++n;
   });
@@ -2045,11 +2098,22 @@ if (S.template) {
       rebuildFrame();
       showPreview(false);
       $("#vp-empty").classList.add("hidden");
+      if (rocket) rocket.refresh();
     },
     save: () => saveSettings(),
     changed: () => { renderOptMode(); estimates(); },
   });
   dparams.render($("#params-box"));
+}
+if (isRocket()) {
+  $("#tab-flight-btn").classList.remove("hidden");
+  api("/api/rocket/catalog").then((rc) => {
+    rocket = new RocketPanel({ S, me, pid, catalog: rc, values: () => S.template.values, save: () => saveSettings(),
+      onEvaluated: (ev) => { flightEval = ev; renderFlightTab(); summaries(); } });
+    rocket.render($("#rocket-box"));
+    rocket.refresh(true);
+    if (!shownJob) switchTab("flight");
+  }).catch(handleError);
 }
 
 // ---- shape features -------------------------------------------------------------------------------------------------------

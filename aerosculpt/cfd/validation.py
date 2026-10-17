@@ -310,6 +310,9 @@ def run_groups(groups, verbose=False):
         rows += wing_rows(verbose)
     if "rc" in groups:
         rows += rc_rows(verbose)
+    if "rocket" in groups:
+        from ..rocket.validation import rocket_rows
+        rows += rocket_rows(verbose)
     doc = json.loads(OUT.read_text()) if OUT.exists() else {"cases": []}
     ids = {r["id"] for r in rows}
     doc["cases"] = [c for c in doc.get("cases", []) if c["id"] not in ids] + rows
@@ -362,5 +365,5 @@ def run_suite(verbose=False, only=None):
         doc["cases"] = keep + results
     OUT.write_text(json.dumps(doc, indent=1))
     if not only:
-        doc = run_groups(("supersonic", "rc", "wing"), verbose)
+        doc = run_groups(("supersonic", "rc", "wing", "rocket"), verbose)
     return doc

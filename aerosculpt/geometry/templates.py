@@ -27,6 +27,7 @@ GROUP_NAMES = {BODY: "body", WING: "wing", HTAIL: "horizontal tail", VTAIL: "ver
 NOSE_FAMILIES = [("conical", "Conical"), ("ogive", "Tangent ogive"), ("elliptical", "Elliptical"),
                  ("power", "Power law"), ("haack", "Von Kármán (Haack)")]
 AIRFOILS = [("naca4", "NACA 4-digit"), ("naca5", "NACA 5-digit")]
+FIN_SHAPES = [("trapezoid", "Trapezoidal / swept"), ("elliptical", "Elliptical")]
 
 
 @dataclass
@@ -108,18 +109,22 @@ def _wing_params(span, root, tip, sweep, x_frac=None, z_frac=None, dihedral=2.0,
 TEMPLATES = {
     "rocket": {
         "title": "Rocket", "category": "rocket", "help": "Nose, body tube, boat-tail and fins.",
-        "params": _nose_params("ogive", 0.264, (0.15, 0.45)) + [
-            Param("length", "Overall length", "body", "m", 0.05, 50.0, 1.2, (1.0, 1.4), locked=True),
+        "params": _nose_params("ogive", 0.40, (0.2, 0.55)) + [
+            Param("length", "Overall length", "body", "m", 0.05, 50.0, 1.4, (1.1, 1.6), locked=True),
             Param("diameter", "Body diameter", "body", "m", 0.005, 5.0, 0.1, (0.085, 0.115), locked=True),
             Param("tail_length", "Boat-tail length", "tail", "m", 0.0, 10.0, 0.072, (0.02, 0.16)),
             Param("tail_taper", "Base / body diameter", "tail", "ratio", 0.2, 1.0, 0.7, (0.5, 1.0),
                   help="1 is a flat base the size of the body; smaller is a boat-tail with less base drag."),
-            Param("fin_count", "Number of fins", "fins", "choice", default="4", choices=[("3", "3"), ("4", "4")], locked=True),
-            Param("fin_root", "Fin root chord", "fins", "m", 0.005, 5.0, 0.204, (0.15, 0.25), locked=True),
-            Param("fin_tip", "Fin tip chord", "fins", "m", 0.0, 5.0, 0.084, (0.04, 0.12), locked=True),
-            Param("fin_span", "Fin span (exposed)", "fins", "m", 0.005, 5.0, 0.13, (0.09, 0.16), locked=True),
-            Param("fin_sweep", "Fin sweep (leading edge)", "fins", "deg", 0.0, 75.0, 40.0, (25.0, 55.0), locked=True),
-            Param("fin_thickness", "Fin thickness", "fins", "m", 0.0005, 0.2, 0.0072, (0.004, 0.01), locked=True),
+            Param("fin_count", "Number of fins", "fins", "choice", default="4", choices=[("3", "3"), ("4", "4"), ("5", "5"), ("6", "6")], locked=True),
+            Param("fin_shape", "Fin shape", "fins", "choice", default="trapezoid", choices=FIN_SHAPES, locked=True,
+                  help="Trapezoidal fins (swept, clipped delta, rectangular) by root, tip and sweep; elliptical fins by root and span."),
+            Param("fin_root", "Fin root chord", "fins", "m", 0.005, 5.0, 0.18, (0.12, 0.24), locked=True),
+            Param("fin_tip", "Fin tip chord", "fins", "m", 0.0, 5.0, 0.08, (0.03, 0.12), locked=True, show_if={"fin_shape": ["trapezoid"]}),
+            Param("fin_span", "Fin span (exposed)", "fins", "m", 0.005, 5.0, 0.14, (0.09, 0.18), locked=True),
+            Param("fin_sweep", "Fin sweep (leading edge)", "fins", "deg", 0.0, 75.0, 30.0, (15.0, 50.0), locked=True, show_if={"fin_shape": ["trapezoid"]}),
+            Param("fin_thickness", "Fin thickness", "fins", "m", 0.0005, 0.2, 0.0064, (0.003, 0.01), locked=True),
+            Param("fin_position", "Fins forward of the tail", "fins", "m", 0.0, 10.0, 0.0, (0.0, 0.1), locked=True,
+                  help="Distance from the fin root's trailing edge to the start of the boat-tail (or the aft end)."),
         ],
     },
     "uav": {
@@ -425,21 +430,31 @@ def build(tid, values, preview=False):
         L = info["length"]
     if tid == "rocket":
         Lt = float(v["tail_length"])
-        x_te = L - Lt
+        x_te = L - Lt - float(v.get("fin_position", 0.0))
         cr, ct, s, tf = (float(v[k]) for k in ("fin_root", "fin_tip", "fin_span", "fin_thickness"))
         sweep = math.tan(math.radians(float(v["fin_sweep"])))
         x_le = x_te - cr
         if x_le < float(v["nose_length"]):
             problems.append("fins reach onto the nose")
+        if x_te > L - Lt + 1e-9:
+            problems.append("fins hang off the tail")
         r_in = 0.6 * R
-        poly = [(x_le, r_in), (x_te, r_in), (x_te, R), (x_le + s * sweep + ct, R + s), (x_le + s * sweep, R + s), (x_le, R)]
-        if ct < 1e-6:
-            poly = [(x_le, r_in), (x_te, r_in), (x_te, R), (x_le + s * sweep, R + s), (x_le, R)]
+        if v.get("fin_shape") == "elliptical":
+            # a half ellipse standing on the root chord
+            th = np.linspace(0.0, math.pi, 17)
+            outline = [(x_le + 0.5 * cr * (1 - math.cos(t)), R + s * math.sin(t)) for t in th[1:-1]]
+            poly = [(x_le, r_in), (x_te, r_in), (x_te, R)] + outline[::-1] + [(x_le, R)]
+            area = math.pi * cr * s / 4
+        else:
+            poly = [(x_le, r_in), (x_te, r_in), (x_te, R), (x_le + s * sweep + ct, R + s), (x_le + s * sweep, R + s), (x_le, R)]
+            if ct < 1e-6:
+                poly = [(x_le, r_in), (x_te, r_in), (x_te, R), (x_le + s * sweep, R + s), (x_le, R)]
+            area = 0.5 * s * (cr + ct)
         nf = int(v["fin_count"])
         a0 = 45.0 if nf == 4 else 90.0
         for k in range(nf):
             parts.append((_prism(poly, tf, a0 + k * 360.0 / nf), FINS))
-        info.update({"fin_count": nf, "min_thickness": tf, "fin_area_each": 0.5 * s * (cr + ct)})
+        info.update({"fin_count": nf, "min_thickness": tf, "fin_area_each": area})
         ref = {"ref_area": math.pi * R * R, "ref_length": L, "x_ref": [0.5 * L, 0.0, 0.0]}
     if tid in ("uav", "wing"):
         sec = _section(v)

@@ -17,3 +17,7 @@ __pycache__/
 *.nbc
 .pytest_cache/
 *.log
+aerosculpt/BUILD
+THIRD-PARTY-NOTICES.txt
+dist/
+build/

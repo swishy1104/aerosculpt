@@ -51,11 +51,49 @@ def available():
                 _STATE["name"] = cuda.get_current_device().name.decode() if isinstance(
                     cuda.get_current_device().name, bytes) else str(cuda.get_current_device().name)
         except Exception as e:  # noqa: BLE001 - any CUDA problem means: use the CPU
-            _STATE["why"] = f"{type(e).__name__}: {e}"
+            _STATE["why"] = _explain(e)
             _STATE["trace"] = traceback.format_exc()
         if not _STATE["ok"] and mode in ("1", "on", "yes", "true"):
             raise RuntimeError(f"AEROSCULPT_GPU=1 but the GPU cannot be used ({_STATE['why']})")
     return _STATE["ok"]
+
+
+def _explain(e):
+    """A CUDA failure in the user's words."""
+    msg = f"{type(e).__name__}: {e}"
+    low = msg.lower()
+    if "insufficient_driver" in low or ("driver" in low and "version" in low):
+        return "the NVIDIA driver is older than CUDA 12 needs: update it from nvidia.com/drivers (" + msg[:80] + ")"
+    if "no module named" in low or "cannot import" in low:
+        return "the GPU libraries are not installed (the GPU pack): " + msg[:100]
+    if "no cuda" in low or "cuda_error_no_device" in low or "nvcuda" in low:
+        return "no NVIDIA GPU was found (an AMD or Intel card runs the CPU tunnel)"
+    if "out of memory" in low:
+        return "the GPU ran out of memory"
+    return msg
+
+
+def memory_info():
+    """(free, total) bytes on the current GPU, or None."""
+    if not available():
+        return None
+    try:
+        from numba import cuda
+        free, total = cuda.current_context().get_memory_info()
+        return int(free), int(total)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+BYTES_PER_CELL = 170        # two population sets (19 x 4 B), flags, averaged fields
+
+
+def max_cells():
+    """The largest tunnel grid this GPU's free memory holds (None: no GPU)."""
+    mi = memory_info()
+    if not mi:
+        return None
+    return int(0.75 * mi[0] / BYTES_PER_CELL)
 
 
 def device_name():

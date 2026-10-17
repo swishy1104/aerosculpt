@@ -176,14 +176,49 @@ lock and an optimizer range; free ones become search variables (`optimize/spaces
   (`aerosculpt/static/clients/aerosculpt_client.py`), teams with roles and an audit trail (`teams.py`),
   OpenID Connect single sign-on (`sso.py`, `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET`).
 
+## Rockets
+
+A rocket project (the Rocket template, or an uploaded OpenRocket `.ork` / RockSim `.rkt` design) carries a flight
+model beside the wind tunnels (`aerosculpt/rocket/`): the component drag build-up (Hoerner, Barrowman, OpenRocket
+documentation), Barrowman stability with Mach corrections, NACA TN 4197 fin flutter, motors from `.eng` / `.rse`
+files, a built-in library or ThrustCurve.org, and a point-mass flight on a launch rail in wind with recovery. The
+Flight tab in the workspace updates live; the optimizer's "Highest apogee" and "Lowest drag (rocket drag model)"
+goals fly every design and reject any that loses its static margin, flutters or leaves the rail too slowly (the CFD
+goals apply the same guard). Metric or imperial units, altimeter-log comparison, a drag-table CSV. Validation
+rows under "Rocket methods" on `/validation`; the guide is `/docs#rockets`.
+
 ## Desktop app
 
 `python desktop.py` runs AeroSculpt privately on 127.0.0.1 (no sign-in, data in `%LOCALAPPDATA%\AeroSculpt`,
-NVIDIA GPU or CPU) and opens the browser. `pyinstaller desktop.spec --noconfirm` builds `dist/AeroSculpt/AeroSculpt.exe`
-(one folder, about 1.4 GB, including the CUDA runtime from the `nvidia-*` pip packages and Anaconda's Intel
-runtime DLLs). `AeroSculpt.exe --check` reports whether the GPU and STEP support work on that computer (`--verbose` adds the
-error trace when the GPU does not). The first
-start compiles the solver (a few minutes, cached in the user folder afterwards).
+NVIDIA GPU or CPU) and opens the browser through a launch link that carries a one-time token (`local.py`: the app
+only answers to localhost and only to the browser opened through that link, so no website you visit can drive it).
+Without a licence key it runs the free desktop tier; Pro and Team subscribers generate a key on their account page
+(`license.py`: Ed25519-signed, verified offline, 30-day grace after expiry; the server signs with
+`LICENSE_PRIVATE_KEY` or `data/license_private.pem`). Account → Desktop app installs the key, toggles the Fusion
+bridge, crash files, update checks and online motor search, saves a diagnostic bundle (`diagnostics.py`) and checks
+GitHub for a newer release (`update.py`; nothing installs itself).
+
+Release build: `python scripts/build_desktop.py --gpu-pack --installer` stamps the git commit into every result and
+report, writes `THIRD-PARTY-NOTICES.txt`, runs PyInstaller (`desktop.spec`), moves the CUDA runtime and numba-cuda
+into a separate `AeroSculpt-GPU-pack-<version>.zip` (users with an NVIDIA card unzip it over the app), signs the
+executable when `SIGN_CMD` is set (a code-signing certificate is needed or Windows SmartScreen warns users), zips the
+app and compiles `installer/AeroSculpt.iss` with Inno Setup when it is installed. gmsh (STEP/IGES import) is GPL and
+is **not** bundled unless `AEROSCULPT_BUNDLE_GMSH=1`. `AeroSculpt.exe --check` reports GPU pack, STEP and licence
+status; `--license KEY` installs a key. The first start compiles the solver (a few minutes, cached afterwards). Grids
+are capped to the card's free memory (`gpu.max_cells`), and an AMD/Intel machine runs the CPU tunnel with a plain
+message. `.github/workflows/desktop.yml` builds and self-checks the CPU-only app on a clean Windows runner and
+publishes it on a `v*` tag.
+
+Projects export as one `.aerosculpt` file (model, source, settings, flight log) and import again in any later
+version.
+
+## Before publishing — what is not done by a build
+
+- A code-signing certificate (`SIGN_CMD`), live Stripe keys, SMTP, a legal review of `/terms` and `/privacy`, and an
+  export-control opinion are outside the code.
+- A beta with real rocketeers and their altimeter logs: the rocket methods match their published sources, but the
+  only flight validation shipped is the manufacturer's figure for a classic kit.
+- Built-in motor curves are approximate; certified curves come from the manufacturer's file or ThrustCurve.org.
 
 ## How it works
 

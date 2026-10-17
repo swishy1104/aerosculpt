@@ -4,8 +4,8 @@
 const OCCT_VERSION = "0.0.23";
 const OCCT_BASE = `https://cdn.jsdelivr.net/npm/occt-import-js@${OCCT_VERSION}/dist/`;
 
-export const ACCEPT = ".stl,.obj,.step,.stp,.iges,.igs,.brep,.3mf,.ply,.glb,.gltf";
-export const NATIVE = ["stl", "obj"];
+export const ACCEPT = ".stl,.obj,.step,.stp,.iges,.igs,.brep,.3mf,.ply,.glb,.gltf,.ork,.rkt";
+export const NATIVE = ["stl", "obj", "ork", "rkt"];      // ork / rkt: rocket designs the server reads itself
 
 export function extOf(name) {
   return (name.split(".").pop() || "").toLowerCase();

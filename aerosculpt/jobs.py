@@ -58,6 +58,9 @@ def summarize(result):
         out.update({"improvement": result["improvement"], "drag_change": result["drag_change"],
                     "objective": result["objective"], "verified": bool(result.get("verified")),
                     "ld_max": result["best"]["summary"]["ld_max"]})
+        if result.get("apogee_change") is not None:
+            out["apogee_change"] = result["apogee_change"]
+            out["apogee_m"] = result["rocket"]["best"]["flight"]["apogee_m"]
     return out
 
 
@@ -208,7 +211,9 @@ def run_job(job):
         shutil.rmtree(out, ignore_errors=True)
     model = project_dir(project["id"]) / ("model." + project["filename"].rsplit(".", 1)[-1].lower())
     tunnel = spec.get("tunnel", "general")
-    if tunnel == "supersonic":
+    if (spec.get("optimize") or {}).get("objective") in ("apogee", "rocket_drag"):
+        from .rocket.runner import RocketRunner as runner_cls
+    elif tunnel == "supersonic":
         from .hyper.runner import HyperRunner as runner_cls
     elif tunnel == "rc":
         from .rc.runner import RCRunner as runner_cls
@@ -230,6 +235,11 @@ def run_job(job):
     except Exception as e:  # noqa: BLE001 - report, never crash the worker
         status, error = "failed", f"Internal error: {type(e).__name__}. Our team has been notified."
         ctx.log(traceback.format_exc())
+        try:
+            from .diagnostics import record_crash
+            record_crash(job["id"], spec, traceback.format_exc())
+        except Exception:  # noqa: BLE001
+            pass
     ctx.flush()
     if hasattr(runner, "credits"):
         credits = runner.credits() if getattr(runner, "evaluations", 0) else 0
