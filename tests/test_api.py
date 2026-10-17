@@ -22,6 +22,8 @@ def client():
 
 
 def signup(c, email, pw="Correct-Horse-9"):
+    from aerosculpt.security import auth_limiter
+    auth_limiter.hits.clear()          # sign-ups by other test modules count against the per-address limit
     r = c.post("/api/auth/signup", json={"email": email, "password": pw, "name": "T", "accept_terms": True})
     assert r.status_code == 200, r.text
     return r
@@ -57,9 +59,12 @@ def test_signup_validation(client):
 
 
 def test_full_flow(client):
+    # the first real account becomes the admin (other test modules may have signed up before this one)
+    with db() as con:
+        first = con.execute("SELECT COUNT(*) AS n FROM users WHERE billing_source IS NULL OR billing_source NOT IN ('guest', 'preview')").fetchone()["n"] == 0
     signup(client, "flow@example.com")
     me = client.get("/api/me").json()
-    assert me["plan"] == "lite" and me["credits_left"] == 40 and me["is_admin"]
+    assert me["plan"] == "lite" and me["credits_left"] == 40 and me["is_admin"] == first
     # CSRF: cookie-authenticated writes need the header
     assert client.patch("/api/me", json={"name": "X"}).status_code == 403
     assert client.patch("/api/me", json={"name": "X"}, headers=H).json()["name"] == "X"
