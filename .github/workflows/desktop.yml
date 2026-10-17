@@ -6,6 +6,8 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+permissions:
+  contents: write          # the Release step creates the release and uploads the zip
 jobs:
   windows:
     runs-on: windows-latest
