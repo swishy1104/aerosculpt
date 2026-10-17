@@ -1,6 +1,7 @@
 """AeroSculpt command line.
 
     python run.py serve              web server + job workers (default)
+    python run.py serve --anonymous  the same, account-free (every visitor gets a private workspace)
     python run.py web                web server only (run workers elsewhere)
     python run.py worker             one job worker
     python run.py init               create the database
@@ -33,7 +34,13 @@ def main(argv=None):
     ap.add_argument("--host")
     ap.add_argument("--port", type=int)
     ap.add_argument("--workers", type=int)
+    ap.add_argument("--anonymous", action="store_true", help="account-free: every visitor gets a private temporary workspace")
     a = ap.parse_args(argv)
+    if a.anonymous:
+        import os
+        os.environ["ANONYMOUS_ACCESS"] = "1"
+        os.environ.setdefault("OPEN_ACCESS", "0")
+        os.environ.setdefault("GUEST_HOURS", "72")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     from aerosculpt.config import ensure_dirs, settings
     from aerosculpt.db import db, init_db

@@ -124,17 +124,95 @@ def _preview_user(con):
     return row
 
 
-def start_session(con, request, user_id, response: Response, max_age_s=None):
+def _insert_session(con, user_id, ip, user_agent, age):
     tok = new_token()
     now = time.time()
-    age = int(max_age_s or settings.session_days * 86400)
     con.execute("INSERT INTO sessions (token_hash, user_id, created_at, expires_at, ip, user_agent) VALUES (?,?,?,?,?,?)",
-                (token_hash(tok), user_id, now, now + age, _client_ip(request),
-                 request.headers.get("user-agent", "")[:300]))
+                (token_hash(tok), user_id, now, now + age, ip, (user_agent or "")[:300]))
     con.execute("UPDATE users SET last_login_at=? WHERE id=?", (now, user_id))
     con.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+    return tok
+
+
+def start_session(con, request, user_id, response: Response, max_age_s=None):
+    age = int(max_age_s or settings.session_days * 86400)
+    tok = _insert_session(con, user_id, _client_ip(request), request.headers.get("user-agent", ""), age)
     response.set_cookie(SESSION_COOKIE, tok, max_age=age, httponly=True,
                         secure=settings.secure_cookies, samesite="lax", path="/")
+
+
+def new_guest(con, ip, plan="guest"):
+    """A temporary account (jobs.purge_guests deletes it, with its projects, after GUEST_HOURS)."""
+    email = f"guest-{secrets.token_hex(6)}@{GUEST_DOMAIN}"
+    cur = con.execute("""INSERT INTO users (email, name, password_hash, created_at, plan, plan_status, billing_source)
+                         VALUES (?, ?, '!', ?, ?, 'active', 'guest')""", (email, "Visitor" if plan == "public" else "Guest", time.time(), plan))
+    audit(con, cur.lastrowid, "guest_created", ip)
+    return cur.lastrowid
+
+
+class AnonymousAccess:
+    """Account-free public use (ANONYMOUS_ACCESS=1): a visitor without a session gets a temporary
+    account of their own, on the Public plan, the moment they open the app or call the API; the
+    session cookie keeps their projects theirs and nobody else's. No sign-in or sign-up is shown
+    (the owner can still reach /login). Too many new visitors from one address, or too many live
+    visitors, are asked to come back later."""
+
+    SKIP = ("/api/auth/", "/api/health", "/api/billing/webhook", "/api/plans", "/api/samples", "/api/validation", "/api/me",
+            "/auth/", "/static/")
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not settings.anonymous_access:
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "/")
+        if not (path.startswith("/app") or path.startswith("/api/")) or path.startswith(self.SKIP):
+            return await self.app(scope, receive, send)
+        headers = {k.decode().lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        if headers.get("authorization", "").lower().startswith("bearer "):
+            return await self.app(scope, receive, send)
+        cookies = {}
+        for part in headers.get("cookie", "").split(";"):
+            if "=" in part:
+                k, v = part.strip().split("=", 1)
+                cookies[k] = v
+        tok = cookies.get(SESSION_COOKIE)
+        if tok:
+            with db() as con:
+                row = con.execute("SELECT expires_at FROM sessions WHERE token_hash=?", (token_hash(tok),)).fetchone()
+            if row and row["expires_at"] > time.time():
+                return await self.app(scope, receive, send)
+        ip = scope.get("client")[0] if scope.get("client") else "?"
+        if not guest_limiter.allow("anon:" + ip):
+            return await _refuse(send, path, 429, "Too many new visitors from this network. Try again in an hour.")
+        age = int(settings.guest_hours * 3600)
+        with transaction() as con:
+            live = con.execute("SELECT COUNT(*) AS n FROM users WHERE billing_source='guest' AND created_at > ?",
+                               (time.time() - settings.guest_hours * 3600,)).fetchone()["n"]
+            if live >= settings.anon_max_active:
+                return await _refuse(send, path, 503, "AeroSculpt is full right now. Please try again later.")
+            uid = new_guest(con, ip, "public")
+            tok = _insert_session(con, uid, ip, headers.get("user-agent", ""), age)
+        cookie = f"{SESSION_COOKIE}={tok}"
+        scope["headers"] = [(k, v) for k, v in scope["headers"] if k.lower() != b"cookie"] + \
+            [(b"cookie", ((headers.get("cookie", "") + "; ") if headers.get("cookie") else "").encode("latin-1") + cookie.encode())]
+        set_cookie = f"{cookie}; Path=/; Max-Age={age}; HttpOnly; SameSite=Lax" + ("; Secure" if settings.secure_cookies else "")
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                message.setdefault("headers", []).append((b"set-cookie", set_cookie.encode()))
+            await send(message)
+        return await self.app(scope, receive, send_wrapper)
+
+
+async def _refuse(send, path, status, text):
+    api = path.startswith("/api/")
+    body = json.dumps({"error": text}).encode() if api else f"<!doctype html><title>AeroSculpt</title><body style='font:15px system-ui;padding:40px'><h2>{text}</h2>".encode()
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/json" if api else b"text/html; charset=utf-8"), (b"content-length", str(len(body)).encode()),
+                            (b"cache-control", b"no-store")]})
+    await send({"type": "http.response.body", "body": body})
 
 
 async def body_json(request: Request, limit=1_000_000):
@@ -163,6 +241,7 @@ def user_public(con, user):
         "preview": user["email"] == PREVIEW_EMAIL and settings.open_access,
         "app_version": VERSION, "build": build_id(), "local": settings.open_access,
         "guest": user["billing_source"] == "guest",
+        "anonymous": settings.anonymous_access and user["billing_source"] == "guest",
         "guest_expires_at": user["created_at"] + settings.guest_hours * 3600 if user["billing_source"] == "guest" else None,
         "has_api_key": bool(user["api_key_hash"]), "api_key_prefix": user["api_key_prefix"],
         "limits": {k: plan[k] for k in ("monthly_credits", "max_iterations", "fidelities", "objectives",
@@ -204,7 +283,8 @@ async def signup(request: Request):
     with transaction() as con:
         if con.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
             err(409, "An account with this email already exists. Sign in instead.", field="email")
-        first = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"] == 0
+        # the first real account is the admin; visitors, guests and the local preview user do not count
+        first = con.execute("SELECT COUNT(*) AS n FROM users WHERE billing_source IS NULL OR billing_source NOT IN ('guest', 'preview')").fetchone()["n"] == 0
         cur = con.execute("INSERT INTO users (email, name, password_hash, created_at, is_admin) VALUES (?,?,?,?,?)",
                           (email, name, hashed, time.time(), 1 if first else 0))
         uid = cur.lastrowid
@@ -230,11 +310,7 @@ async def guest(request: Request):
                            (time.time() - settings.guest_hours * 3600,)).fetchone()["n"]
         if live >= settings.guest_max_active:
             err(503, "The demo is full right now. Please try again later.")
-        email = f"guest-{secrets.token_hex(6)}@{GUEST_DOMAIN}"
-        cur = con.execute("""INSERT INTO users (email, name, password_hash, created_at, plan, plan_status, billing_source)
-                             VALUES (?, 'Guest', '!', ?, 'guest', 'active', 'guest')""", (email, time.time()))
-        uid = cur.lastrowid
-        audit(con, uid, "guest_created", ip)
+        uid = new_guest(con, ip)
         start_session(con, request, uid, resp, max_age_s=settings.guest_hours * 3600)
     return resp
 
@@ -427,6 +503,7 @@ async def plans(request: Request):
         "ai": ai_info(),
         "materials": MATERIALS,
         "hyper_objectives": dict(HYPER_OBJECTIVES),
+        "anonymous": settings.anonymous_access,
         "rocket_objectives": dict(ROCKET_GOALS),
         "prop_families": {k: {"name": f["name"], "note": f["note"]} for k, f in PROP_FAMILIES.items()},
     })
@@ -2362,7 +2439,7 @@ def auth_page(name):
     inner = page(name)
 
     async def handler(request: Request):
-        if settings.open_access:
+        if settings.open_access or (settings.anonymous_access and name == "signup"):
             return RedirectResponse("/app", status_code=302)
         return await inner(request)
     return handler
@@ -2524,7 +2601,7 @@ routes = [
 
 app = Starlette(
     routes=routes,
-    middleware=[Middleware(LocalGuard), Middleware(SecurityHeaders), Middleware(GZipMiddleware, minimum_size=1024)],
+    middleware=[Middleware(LocalGuard), Middleware(AnonymousAccess), Middleware(SecurityHeaders), Middleware(GZipMiddleware, minimum_size=1024)],
     exception_handlers={404: not_found, ApiError: api_error, Exception: server_error},
     lifespan=lifespan,
 )

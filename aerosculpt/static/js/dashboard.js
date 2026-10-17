@@ -27,7 +27,7 @@ function tiles(projects) {
     <div class="card stat-tile"><div class="label">CFD runs this month</div><div class="value">${fmtInt(me.usage.cfd_runs)}</div>
       <div class="small muted">${fmtInt(me.usage.jobs)} jobs</div></div>
     <div class="card stat-tile"><div class="label">Projects</div><div class="value">${projects.length}${me.limits.max_projects ? ` / ${me.limits.max_projects}` : ""}</div>
-      <div class="small muted">${me.limits.max_projects ? "Lite limit" : "Unlimited"}</div></div>`;
+      <div class="small muted">${me.limits.max_projects ? `${esc(me.plan_name)} limit` : "Unlimited"}</div></div>`;
 }
 
 function jobLine(j) {

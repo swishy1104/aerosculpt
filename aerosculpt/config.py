@@ -75,6 +75,10 @@ class Settings:
     check_updates = _bool("CHECK_UPDATES", False)
     guest_hours = float(os.environ.get("GUEST_HOURS", "24"))
     guest_max_active = int(os.environ.get("GUEST_MAX_ACTIVE", "60"))
+    # account-free public use: every visitor gets a temporary account of their own (the Public plan)
+    # the moment they open the app; no sign-in or sign-up anywhere. Kept GUEST_HOURS, then deleted.
+    anonymous_access = _bool("ANONYMOUS_ACCESS", False)
+    anon_max_active = int(os.environ.get("ANON_MAX_ACTIVE", "400"))
     # optional AI design assistant (aerosculpt/ai.py): any OpenAI-compatible chat endpoint, e.g. a
     # free local model through Ollama (http://127.0.0.1:11434/v1). Unset = off, nothing is sent.
     ai_base_url = os.environ.get("AI_BASE_URL", "").strip()

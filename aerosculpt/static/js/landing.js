@@ -18,7 +18,10 @@ siteFooter();
 // a public deployment may offer a no-account demo (GUEST_DEMO); invite-only servers send people to sign in
 fetch("/api/plans").then((r) => r.json()).then((cat) => {
   document.querySelectorAll("[data-start]").forEach((a) => {
-    if (cat.guest_demo) {
+    if (cat.anonymous) {
+      a.textContent = "Open the app — no account needed";
+      a.href = "/app";
+    } else if (cat.guest_demo) {
       a.textContent = "Try the live demo";
       a.addEventListener("click", async (e) => {
         e.preventDefault();

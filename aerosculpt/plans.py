@@ -61,6 +61,16 @@ PLANS = {
 }
 
 
+# account-free public use (config.anonymous_access): a generous free tier per visitor, never sold
+PLANS["public"] = {
+    **PLANS["pro"], "key": "public", "name": "Public", "tagline": "Free to use, no account needed",
+    "monthly_credits": 60, "max_iterations": 24, "fidelities": ["draft", "standard"], "max_top_k": 4,
+    "max_angles": 5, "max_speeds": 8, "max_zones": 8, "max_propellers": 2, "max_iterations_panel": 120, "max_features": 8,
+    "max_projects": 8, "max_upload_mb": 50, "max_triangles": 1_000_000,
+    "export": True, "verify": False, "reports": True, "api": False, "priority": -5, "concurrent_jobs": 1,
+    "trial": False, "hidden": True, "features": [],
+}
+
 # the desktop app without a licence key: Lite's features, no credit meter (it is the user's own computer)
 PLANS["desktop"] = {
     **PLANS["lite"], "key": "desktop", "name": "Desktop (free)", "tagline": "Your own computer, no licence key",

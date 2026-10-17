@@ -80,6 +80,15 @@ python run.py validate       # full validation suite (~4 min on the GPU, ~60 min
 python run.py validate supersonic,rc,wing   # the fast groups (~1 min)
 ```
 
+## Account-free public site
+
+`ANONYMOUS_ACCESS=1` (or `python run.py serve --anonymous`, or `Start public site.bat` for a public link) removes
+sign-in and sign-up entirely: the first time a browser opens the app it gets a temporary account of its own on the
+hidden Public plan (standard fidelity, exports, 60 credits, 8 projects) and a cookie that keeps its projects
+private; everything is deleted after `GUEST_HOURS` (72 h by default in this mode). New visitors are rate-limited
+per address and capped at `ANON_MAX_ACTIVE` live workspaces. The owner (`OWNER_EMAILS`) can still sign in at `/login`
+for the admin pages. Marketing pages never create an account.
+
 ## A public link from this computer
 
 Double-click `Start public link.bat` (or `python scripts/public_link.py you@example.com`). It
