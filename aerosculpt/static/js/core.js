@@ -271,7 +271,7 @@ export function confirmDialog(title, text, okLabel = "Confirm", danger = false) 
 export function upgradePrompt(message) {
   if (_me && _me.anonymous) {
     modal({ title: "Not available on the public site", body: h("div", null, h("p", null, message),
-      h("p", { class: "muted small" }, "The public site runs a free tier for everyone. The desktop app and hosted plans have no such limits.")),
+      h("p", { class: "muted small" }, "The public site runs the same limits for everyone. The desktop app has none of them.")),
       actions: [{ label: "OK", kind: "primary" }] });
     return;
   }
@@ -351,6 +351,7 @@ export async function siteNav() {
   if (!anonymous) {
     try { me = await getMe(); } catch (e) { /* offline: show signed-out nav */ }
   }
+  if (anonymous) inner.querySelector('.nav-links a[href="/pricing"]')?.remove();
   if (me || anonymous) {
     right.append(h("a", { class: "btn primary sm", href: "/app" }, anonymous ? "Open the app" : "Open app"));
   } else {
@@ -383,15 +384,15 @@ export function appTop(me, crumbs = []) {
   const right = h("div", { class: "top-right" });
   top.append(right);
   right.append(themeButton());
-  const pill = h("a", { class: "credits-pill", href: me.anonymous ? "/docs#limits" : "/app/billing", title: me.anonymous ? "Compute credits for this visit" : "Compute credits left this month" });
-  right.append(pill);
+  const pill = h("a", { class: "credits-pill", href: "/app/billing", title: "Compute credits left this month" });
+  if (!me.anonymous) right.append(pill);
   const planBadge = h("span", { class: "badge accent" });
   right.append(planBadge);
   const menu = h("div", { class: "menu" });
   const av = me.anonymous ? h("button", { class: "avatar", "aria-label": "Menu", html: icon("user") })
     : h("button", { class: "avatar", "aria-label": "Account menu" }, (me.name || me.email)[0].toUpperCase());
   const pop = h("div", { class: "menu-pop hidden" });
-  pop.innerHTML = `<div class="who">${me.anonymous ? "Visitor<br>no account needed" : `${esc(me.name || "")}<br>${esc(me.email)}`}</div>
+  pop.innerHTML = `<div class="who">${me.anonymous ? "Your workspace" : `${esc(me.name || "")}<br>${esc(me.email)}`}</div>
     <a href="/app">${icon("grid")}Projects</a>
     ${me.guest ? "" : `<a href="/app/billing">${icon("card")}Plan &amp; billing</a>
     <a href="/app/account">${icon("user")}Account</a>`}
@@ -422,7 +423,7 @@ export function appTop(me, crumbs = []) {
 function banners(me, after) {
   if (me.anonymous) {
     const hours = Math.max(1, Math.round((me.guest_expires_at - Date.now() / 1000) / 3600));
-    const b = h("div", { class: "trial-banner", html: `${icon("sparkles")} No account needed: this is your own workspace. Export what you want to keep — it is cleared after about ${hours} hour${hours === 1 ? "" : "s"}.` });
+    const b = h("div", { class: "trial-banner", html: `${icon("sparkles")} This is your own workspace. Export what you want to keep — it is cleared after about ${hours} hour${hours === 1 ? "" : "s"}.` });
     after.after(b);
     return;
   }

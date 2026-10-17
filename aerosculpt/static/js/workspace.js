@@ -78,6 +78,8 @@ const AXES = ["+x", "-x", "+y", "-y", "+z", "-z"];
 // measured on the job worker at start-up (GPU or CPU); fallback: a laptop CPU
 const COMPUTE = catalog.compute || { backend: "cpu", seconds_per_run: { coarse: 8, draft: 20, standard: 95, high: 300 } };
 const PER_RUN_S = COMPUTE.seconds_per_run;
+// the public, account-free site has no credit meter: estimates show time only
+const creditTxt = (n, left = true) => (me.anonymous ? "" : ` · up to ${n} credit${n > 1 ? "s" : ""}${left ? ` · ${fmtInt(me.credits_left)} left` : ""}`);
 const ZONE_TYPES = {
   protect: { label: "Protect", color: "--protect", help: "Geometry inside never moves", name: "Protected region" },
   wheel: { label: "Wheel", color: "--keep", help: "Spins on the rolling road; never reshaped", name: "Wheel", road: true },
@@ -714,7 +716,7 @@ function renderFidelity() {
   }
   const fd = catalog.fidelities[fidelity];
   const where = COMPUTE.backend === "gpu" ? `GPU${COMPUTE.device ? " (" + COMPUTE.device.replace(/^NVIDIA (GeForce )?/, "").replace(/ with Max-Q Design/, "") + ")" : ""}` : "CPU";
-  $("#fid-note").innerHTML = `${fmtInt(fd.cells)}-cell tunnel · ≈ ${fmtDuration(PER_RUN_S[fidelity])} per run on the ${esc(where)} · ${catalog.credits_per_run[fidelity]} credit${catalog.credits_per_run[fidelity] > 1 ? "s" : ""} per run`;
+  $("#fid-note").innerHTML = `${fmtInt(fd.cells)}-cell tunnel · ≈ ${fmtDuration(PER_RUN_S[fidelity])} per run on the ${esc(where)}${me.anonymous ? "" : ` · ${catalog.credits_per_run[fidelity]} credit${catalog.credits_per_run[fidelity] > 1 ? "s" : ""} per run`}`;
 }
 
 function renderObjective() {
@@ -739,7 +741,7 @@ function renderObjective() {
       $("#objective-note").classList.remove("hidden");
       $("#objective-note").innerHTML = ROCKET_GOALS.includes(opt.objective)
         ? `Flies every design on the motor, masses and site from <b>Rocket flight</b>; each must keep the static margin, pass the fin-flutter check and leave the rail fast
-           enough. No CFD, so a large budget costs one credit. The drag comes from the component build-up (see <a href="/validation#rocket" target="_blank">validation</a>).`
+           enough. No CFD, so even a large budget runs in seconds. The drag comes from the component build-up (see <a href="/validation#rocket" target="_blank">validation</a>).`
         : `Shapes are compared in the CFD wind tunnel; every candidate is still checked for static margin and fin flutter with the flight model.`;
     };
     note();
@@ -929,11 +931,11 @@ function estimates() {
   const aRuns = perDesign * (zoom ? 2 : 1);
   const aCred = Math.max(1, Math.ceil(aRuns * per + (gcheck ? 2 * (perDesign / aoas.length) * (catalog.credits_per_run[catalog.explore_fidelity[fidelity] || "coarse"] || 0.4) : 0)));
   const aSecs = time(perDesign, fidelity) * (zoom ? 3 : 1) * (gcheck ? 1.6 : 1);
-  $("#analyze-est").innerHTML = `${aRuns} CFD run${aRuns > 1 ? "s" : ""} · <span id="an-time">≈ ${fmtDuration(aSecs)}</span> · up to ${aCred} credit${aCred > 1 ? "s" : ""} · ${fmtInt(me.credits_left)} left`;
+  $("#analyze-est").innerHTML = `${aRuns} CFD run${aRuns > 1 ? "s" : ""} · <span id="an-time">≈ ${fmtDuration(aSecs)}</span>${creditTxt(aCred)}`;
   if (rocketGoal()) {
     const designs = opt.iterations + 2, rcred = 1 + Math.floor((designs - 1) / 10);
     $("#run-optimize").innerHTML = `${icon("rocket")}Optimize for ${opt.objective === "apogee" ? "apogee" : "drag"}`;
-    $("#optimize-est").innerHTML = `up to ${opt.iterations} designs on the flight model (screening first) · <span id="opt-time">≈ ${fmtDuration(6 + opt.iterations * 0.4)}</span> · ${rcred} credit${rcred > 1 ? "s" : ""}`;
+    $("#optimize-est").innerHTML = `up to ${opt.iterations} designs on the flight model (screening first) · <span id="opt-time">≈ ${fmtDuration(6 + opt.iterations * 0.4)}</span>${creditTxt(rcred, false)}`;
     renderOptMode();
     renderVerify();
     summaries();
@@ -962,12 +964,12 @@ function estimates() {
     ? `≈ ${Math.round(nScreen)} screening + up to ${Math.max(0, opt.iterations - Math.round(nScreen))} search designs on ${exploreCfd ? `${xf} CFD (${nA} angle${nA > 1 ? "s" : ""})` : "the wing model"}${
       cRuns ? ` · ${cRuns} confirmation runs at ${FID_LABEL[fidelity].toLowerCase()} fidelity` : " · confirmed at full model resolution"}`
     : `Tries up to ${opt.iterations} designs, then double-checks the best on a finer grid`) +
-    ` · <span id="opt-time">≈ ${fmtDuration(secs)}</span> · up to ${credits} credit${credits > 1 ? "s" : ""}` +
+    ` · <span id="opt-time">≈ ${fmtDuration(secs)}</span>${creditTxt(credits, false)}` +
     (opt.iterations >= nScreen + 2 ? ""
       : advOn ? ` · <span style="color:var(--warning-text)">budget too small for the screening — lock some parameters or raise it</span>`
       : opt.iterations >= maxIter() ? ` · <span style="color:var(--warning-text)">your plan's design limit leaves some ideas untested</span>`
       : ` · Balanced or Thorough gets to every idea`) +
-    (credits > me.credits_left ? ` · <span style="color:var(--critical-text)">needs more credits</span>` : "");
+    (!me.anonymous && credits > me.credits_left ? ` · <span style="color:var(--critical-text)">needs more credits</span>` : "");
   renderOptMode();
   renderVerify();
   summaries();
@@ -999,9 +1001,9 @@ function hyperEstimates() {
   const designs = opt.iterations + 2;
   const credits = 1 + Math.floor((designs - 1) / 10);
   $("#run-analyze").innerHTML = `${icon("flame")}Run supersonic sweep`;
-  $("#analyze-est").innerHTML = `${n} condition${n > 1 ? "s" : ""} · a few seconds · 1 credit · ${fmtInt(me.credits_left)} left`;
+  $("#analyze-est").innerHTML = `${n} condition${n > 1 ? "s" : ""} · a few seconds${creditTxt(1)}`;
   $("#run-optimize").innerHTML = `${icon("sparkles")}Optimize design`;
-  $("#optimize-est").innerHTML = `up to ${opt.iterations} designs (screening first) × ${n} conditions · ≈ ${fmtDuration(Math.max(5, designs * n * 0.15))} · ${credits} credit${credits > 1 ? "s" : ""}`;
+  $("#optimize-est").innerHTML = `up to ${opt.iterations} designs (screening first) × ${n} conditions · ≈ ${fmtDuration(Math.max(5, designs * n * 0.15))}${creditTxt(credits, false)}`;
   renderOptMode();
   summaries();
 }
@@ -1179,7 +1181,7 @@ function renderStatus(j) {
   if (j.status === "queued") txt = `Waiting in queue${j.queue_position ? ` (position ${j.queue_position})` : ""}…`;
   if (j.status === "failed") txt = j.error || "Failed.";
   if (j.status === "done") txt = `${j.kind === "optimize" ? "Optimization" : "Simulation"} finished ${timeAgo(j.finished_at)} · ${
-    j.spec.tunnel === "supersonic" ? "surface methods" : `${j.cfd_runs} CFD run${j.cfd_runs === 1 ? "" : "s"}`} · ${j.credits_used} credit${j.credits_used === 1 ? "" : "s"}`;
+    j.spec.tunnel === "supersonic" ? "surface methods" : `${j.cfd_runs} CFD run${j.cfd_runs === 1 ? "" : "s"}`}${me.anonymous ? "" : ` · ${j.credits_used} credit${j.credits_used === 1 ? "" : "s"}`}`;
   stage.textContent = txt;
   $("#log").textContent = j.log || "";
   renderLive(j);

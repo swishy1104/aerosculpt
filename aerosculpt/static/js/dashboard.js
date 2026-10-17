@@ -19,6 +19,19 @@ document.querySelectorAll("[data-i]").forEach((el) => { el.innerHTML = icon(el.d
 function tiles(projects) {
   const used = me.usage.credits, total = me.limits.monthly_credits;
   const frac = Math.min(1, used / Math.max(1, total));
+  if (me.anonymous) {
+    const hours = Math.max(1, Math.round((me.guest_expires_at - Date.now() / 1000) / 3600));
+    $("#tiles").innerHTML = `
+    <div class="card stat-tile"><div class="label">Workspace</div><div class="value">Yours</div>
+      <div class="small muted">cleared in about ${hours} h</div></div>
+    <div class="card stat-tile"><div class="label">Fidelity</div><div class="value">${me.limits.fidelities.map((f) => f[0].toUpperCase() + f.slice(1)).join(" · ")}</div>
+      <div class="small muted">CFD runs on the host's GPU, one at a time</div></div>
+    <div class="card stat-tile"><div class="label">CFD runs</div><div class="value">${fmtInt(me.usage.cfd_runs)}</div>
+      <div class="small muted">${fmtInt(me.usage.jobs)} jobs</div></div>
+    <div class="card stat-tile"><div class="label">Projects</div><div class="value">${projects.length}${me.limits.max_projects ? ` / ${me.limits.max_projects}` : ""}</div>
+      <div class="small muted">per workspace</div></div>`;
+    return;
+  }
   $("#tiles").innerHTML = `
     <div class="card stat-tile"><div class="label">Plan</div><div class="value">${esc(me.plan_name)}</div>
       <div class="small muted">${me.plan_status === "trialing" ? "Trial active" : me.plan === "lite" ? '<a href="/app/billing">Upgrade for more</a>' : "Active"}</div></div>

@@ -19,7 +19,7 @@ siteFooter();
 fetch("/api/plans").then((r) => r.json()).then((cat) => {
   document.querySelectorAll("[data-start]").forEach((a) => {
     if (cat.anonymous) {
-      a.textContent = "Open the app — no account needed";
+      a.textContent = "Open the app";
       a.href = "/app";
     } else if (cat.guest_demo) {
       a.textContent = "Try the live demo";
