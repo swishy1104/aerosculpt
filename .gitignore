@@ -24,3 +24,5 @@ build/
 Start public site.bat
 tools/public_site.json
 tools/public_link.txt
+exe.log
+exe.err
