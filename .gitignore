@@ -22,3 +22,4 @@ THIRD-PARTY-NOTICES.txt
 dist/
 build/
 Start public site.bat
+tools/public_site.json

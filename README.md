@@ -1,49 +1,82 @@
-# AeroSculpt
+<p align="center">
+  <img src="aerosculpt/static/img/logo.svg" width="72" alt="">
+</p>
+<h1 align="center">AeroSculpt</h1>
+<p align="center"><b>Three wind tunnels, a rocket flight model and a design optimizer, in a browser tab.</b><br>
+Drop in a rocket, a drone or a wing. Find out how it flies. Let the optimizer make it fly better.</p>
 
-A web application with three wind tunnels for rocket, UAV and RC engineers: put a CAD or mesh
-model through the tunnel that matches how it flies, across a range of speeds and angles of
-attack, then reshape it automatically to cut drag while protecting the parts that must not
-change. Free **Lite** plan, **Pro** with a free trial, and **Team** — billed monthly through Stripe.
+<p align="center">
+  <a href="https://github.com/swishy1104/aerosculpt/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/swishy1104/aerosculpt?label=desktop%20app&color=2563eb"></a>
+  <a href="https://github.com/swishy1104/aerosculpt/actions/workflows/tests.yml"><img alt="Tests" src="https://github.com/swishy1104/aerosculpt/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="https://github.com/swishy1104/aerosculpt/actions/workflows/desktop.yml"><img alt="Desktop build" src="https://github.com/swishy1104/aerosculpt/actions/workflows/desktop.yml/badge.svg"></a>
+</p>
+
+<p align="center"><img src="docs/img/rocket-flight.png" width="900" alt="The rocket flight model: centre of pressure and gravity on the rocket, apogee, speed, rail exit, delay, drag curve"></p>
+
+## What it does
+
+| You bring | AeroSculpt gives back |
+|---|---|
+| 🚀 An **OpenRocket / RockSim** file, or a rocket built from sliders | Stability (CP and CG drawn on the rocket), apogee, top speed, rail-exit speed, the right ejection delay, fin flutter, descent and drift — **live, as you move a slider** |
+| 🛩️ A **drone, wing or UAV** (STL, OBJ, STEP, IGES, 3MF, PLY, glTF) | Drag, lift and L/D across speeds and angles, surface pressure, streamlines, vortices; wings sized at the lift they must carry, with a spar |
+| 🔥 Anything that goes **supersonic** | Wave, base and friction drag to Mach 12, wall temperature and heat flux against the material's limit |
+| 🎯 A design goal | The optimizer changes the real dimensions (nose, fins, boat-tail, span, section...), keeps only what measurably helps, and refuses to report a win that is inside the solver's own error |
+
+Everything is checked against published data on the **Validation** page, and the app says plainly what it is not sure of.
+
+## Try it in 60 seconds
+
+**No install, no account:** open the public site (link in the release notes / the LinkedIn post), press
+*Rocket* and move a slider. The Flight tab reacts immediately. Drop your own `.ork` file to see your rocket.
+
+**On your own computer (Windows, no Python):** download `AeroSculpt-<version>-windows.zip` from the
+[latest release](https://github.com/swishy1104/aerosculpt/releases/latest), unzip, run `AeroSculpt.exe`.
+With an NVIDIA card, unzip the GPU pack from the same page over it first — the CFD runs about 12x faster.
+Windows will warn about an unknown publisher the first time (the app is not code-signed yet).
+
+**From source (any OS):**
+
+```bash
+git clone https://github.com/swishy1104/aerosculpt
+cd aerosculpt
+pip install -r requirements.txt
+python run.py serve          # then open http://localhost:8000
+```
+
+<p align="center">
+  <img src="docs/img/projects.jpg" width="440" alt="The projects page: three tunnels, templates with named dimensions, drag-and-drop upload">
+  <img src="docs/img/workspace.jpg" width="440" alt="A rocket project: the Flight tab says whether it is ready to fly, with apogee, static margin, rail-exit speed, ejection delay and fin flutter">
+</p>
+
+## The three tunnels
 
 | Tunnel | Speeds | Physics |
 |---|---|---|
 | **RC** | 2–60 m/s | General tunnel + propellers: blade-element momentum theory with two measured blade families and 2–6 blades (checked against UIUC data, thrust/power within 8 %) as actuator disks in the CFD |
-| **General** | to Mach 1.2 | 3D lattice-Boltzmann LES (below); Kármán–Tsien compressibility corrections to the critical Mach number, a transonic estimate above it |
+| **General** | to Mach 1.2 | 3D lattice-Boltzmann LES; Kármán–Tsien compressibility corrections to the critical Mach number, a transonic estimate above it |
 | **Supersonic** | Mach 1.2–12, 0–80 km | Surface methods: second-order shock-expansion along body meridians (tangent cone at the tip), tangent wedge, Newtonian, Prandtl–Meyer; Eckert friction and heating, Fay–Riddell stagnation heating, radiative-equilibrium wall temperature against a material library |
 
-Above each body's critical Mach number (typically 0.7–0.85) the General tunnel's drag is a labelled
-transonic estimate that meets the Supersonic tunnel at Mach 1.2.
+And beside them, for rockets, the **flight model**: a component drag build-up (Hoerner, Barrowman, the OpenRocket
+documentation), Barrowman stability with Mach corrections, NACA TN 4197 fin flutter, motors from `.eng`/`.rse` files or
+ThrustCurve.org, and a flight on a launch rail in wind. It runs in milliseconds, so the optimizer can fly thousands of
+designs and reject any that would be unstable, flutter, or crawl off the rail.
 
-- Upload STL, OBJ, STEP, IGES, BREP, 3MF, PLY or glTF (CAD formats are tessellated in the browser).
-- **Flight-envelope sweeps:** airspeed range × angle-of-attack range. One CFD run per angle;
-  every airspeed comes from the same run (exact in the hybrid regime). Top-to-bottom symmetric
-  bodies mirror negative angles instead of re-simulating them.
-- **Protected regions:** protect (frozen geometry, smooth fade-out), keep-inside (payload /
-  motor volume must stay enclosed) and design-only zones, placed by clicking the model.
-- Drag polar, drag/power vs speed, pressure/friction breakdown, surface pressure, slices and
-  animated streamlines at every angle. Lift curve, L/D and pitching moment are shown but
-  marked indicative: lift on thin wings is not validated yet (50–66% low, see `/validation`).
-- **Templates with named dimensions**: rocket, fixed-wing UAV and wing. Nose profile (conical,
-  ogive, elliptical, power law, von Kármán), nose length and tip radius; body and boat-tail; wing
-  span, chords, sweep, NACA 4/5-digit section (continuous), dihedral, twist, incidence, position.
-  Each has a unit, slider, number box, optimizer range and lock; the 3D view updates live.
-- **Optimizer that spends runs carefully**: measures the solver's run-to-run error, screens and
-  ranks every free parameter, Bayesian-optimizes only the most influential, stops when gains fall
-  inside the error, confirms the best at full resolution and says "no reliable improvement"
-  when that is the truth. Candidates are checked (limits, volume, regions, watertight, no
-  self-intersection, stall, stability) before any run; identical runs are cached.
-- **Wings at fixed lift** with a validated wing model (vortex lattice + NeuralFoil sections +
-  Hoerner fuselage), so the optimizer cannot win by shrinking the wing. CFD lift-based goals
-  stay off (`runner.LIFT_VALIDATED`) until the CFD wing case passes.
-- RC tunnel: propellers by blade family, size (inches), pitch, 2–6 blades, rpm and rotation; place
-  them by clicking (snapped to the local centre line), then drag them in 3D, nudge them or snap them
-  to the nose, tail or centre line; live free-air thrust/power/slipstream per option; thrust, shaft
-  power, efficiency, drag in the slipstream and the level top speed.
-- Supersonic tunnel: wave/base/friction drag vs Mach, centre of pressure, wall temperature, heat
-  flux and margin maps, material regions (nose caps, leading edges); optimize for drag or peak
-  temperature within material limits — hundreds of designs in seconds.
-- Light and dark themes, plans, credits, trials, Stripe Checkout + Portal + webhooks, REST API,
-  printable reports, admin overview.
+## Honest about accuracy
+
+- Sphere drag within a few per cent; bluff bodies within 10–15 %; the Ahmed car body on a road within 6–14 % with the zoom grid.
+- Rocket methods match their sources to a few per cent; a classic kit (Estes Alpha III on a C6-5) lands within 1 % of the catalogue altitude.
+- Still rough: very streamlined bodies in the CFD (over-predicted), thin-wing lift from the CFD (marked indicative; wings use a validated vortex-lattice model instead), built-in motor curves (approximate — use the manufacturer's file).
+- Every result and report carries the version and build it came from. Rocketry is real: fly within the NAR / Tripoli safety codes.
+
+## More, in brief
+
+- Flight-envelope sweeps: airspeed range × angle-of-attack range, one CFD run per angle, every airspeed from the same run.
+- Protected regions (frozen parts, keep-inside volumes), shape features, generated design ideas, a rolling road with spinning wheels for cars.
+- Templates with named dimensions (rocket, fixed-wing UAV, wing): every dimension has a unit, slider, optimizer range and lock.
+- Grid-convergence check (GCI), a nested zoom grid near the body, a wall model for high Reynolds numbers.
+- PDF engineering reports, STEP/STL/VTK exports, a Fusion script, run comparison, project files that round-trip.
+- Teams with roles and an audit trail, OpenID Connect single sign-on, a REST API and a one-file Python client.
+- Light and dark themes, plans and credits (Stripe), an account-free public mode, a desktop app with licence keys.
 
 ## Run it locally
 
