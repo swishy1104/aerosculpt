@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import math
 
+from .config import settings
+
 ALL_ASPECTS = ["nose", "tail", "section", "length", "camber", "fairing"]
 ALL_OBJECTIVES = ["drag", "ld", "drag_keep_lift", "drag_fixed_lift", "apogee", "rocket_drag"]
 ROCKET_OBJECTIVES = ["apogee", "rocket_drag"]          # the flight model: no CFD in the loop
@@ -61,6 +63,11 @@ PLANS["public"] = {
     "export": True, "verify": False, "reports": True, "api": False, "priority": -5, "concurrent_jobs": 1,
     "trial": False, "hidden": True, "features": [],
 }
+# The host decides which fidelities its GPU can afford for visitors: PUBLIC_FIDELITIES=draft,standard,high
+# in .env (then restart) unlocks high; the default is draft and standard. High also enables verification.
+_public_fid = [f.strip() for f in settings.public_fidelities.split(",") if f.strip() in CREDITS_PER_RUN]
+PLANS["public"]["fidelities"] = _public_fid or ["draft", "standard"]
+PLANS["public"]["verify"] = "high" in PLANS["public"]["fidelities"]
 
 # the desktop app without a licence key: Lite's features, no credit meter (it is the user's own computer)
 PLANS["desktop"] = {

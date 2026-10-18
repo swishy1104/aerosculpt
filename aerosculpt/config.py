@@ -76,6 +76,8 @@ class Settings:
     guest_max_active = int(os.environ.get("GUEST_MAX_ACTIVE", "60"))
     # account-free public use: every visitor gets a temporary account of their own (the Public plan)
     # the moment they open the app; no sign-in or sign-up anywhere. Kept GUEST_HOURS, then deleted.
+    # fidelities offered on the account-free site: "draft,standard,high" unlocks high for every visitor
+    public_fidelities = os.environ.get("PUBLIC_FIDELITIES", "draft,standard").strip().lower()
     anonymous_access = _bool("ANONYMOUS_ACCESS", False)
     anon_max_active = int(os.environ.get("ANON_MAX_ACTIVE", "400"))
     # optional AI design assistant (aerosculpt/ai.py): any OpenAI-compatible chat endpoint, e.g. a

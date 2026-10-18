@@ -116,7 +116,7 @@ python run.py validate supersonic,rc,wing   # the fast groups (~1 min)
 
 `ANONYMOUS_ACCESS=1` (or `python run.py serve --anonymous`, or `Start public site.bat` for a public link) removes
 sign-in and sign-up entirely: the first time a browser opens the app it gets a temporary account of its own on the
-hidden Public plan (standard fidelity, exports, 60 credits, 8 projects) and a cookie that keeps its projects
+hidden Public plan (draft and standard fidelity, or high too with `PUBLIC_FIDELITIES=draft,standard,high`; exports, no credit meter, 8 projects) and a cookie that keeps its projects
 private; everything is deleted after `GUEST_HOURS` (72 h by default in this mode). New visitors are rate-limited
 per address and capped at `ANON_MAX_ACTIVE` live workspaces. The owner (`OWNER_EMAILS`) can still sign in at `/login`
 for the admin pages. Marketing pages never create an account.
