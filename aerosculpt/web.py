@@ -73,7 +73,7 @@ def current_user(request: Request, con, required=True):
         user = con.execute("SELECT * FROM users WHERE api_key_hash=?", (token_hash(key),)).fetchone()
         via = "api_key"
         if user is not None and not plan_for(user)["api"]:
-            err(403, "API access requires the Team plan.")
+            err(403, "API access is part of Pro.")
     else:
         tok = request.cookies.get(SESSION_COOKIE)
         if tok:
@@ -109,7 +109,7 @@ def _preview_user(con):
     row = con.execute("SELECT * FROM users WHERE email=?", (PREVIEW_EMAIL,)).fetchone()
     if row is None:
         con.execute("""INSERT OR IGNORE INTO users (email, name, password_hash, created_at, plan, plan_status,
-                       billing_source, is_admin) VALUES (?, 'Local preview', '!', ?, 'team', 'active', 'preview', 1)""",
+                       billing_source, is_admin) VALUES (?, 'Local preview', '!', ?, 'pro', 'active', 'preview', 1)""",
                     (PREVIEW_EMAIL, time.time()))
         row = con.execute("SELECT * FROM users WHERE email=?", (PREVIEW_EMAIL,)).fetchone()
     # the desktop app: features by the installed licence key (the free desktop tier without one)
@@ -258,10 +258,10 @@ def user_public(con, user):
 
 # ---- auth endpoints -------------------------------------------------------------------
 def _apply_owner(con, uid, email):
-    """Owners of a private deployment get admin and the Team plan, outside billing."""
+    """Owners of a private deployment get admin and the Pro plan, outside billing."""
     if email in settings.owner_emails:
-        con.execute("""UPDATE users SET is_admin=1, plan='team', plan_status='active', billing_source='owner'
-                       WHERE id=? AND (plan!='team' OR plan_status!='active' OR is_admin=0)""", (uid,))
+        con.execute("""UPDATE users SET is_admin=1, plan='pro', plan_status='active', billing_source='owner'
+                       WHERE id=? AND (plan!='pro' OR plan_status!='active' OR is_admin=0)""", (uid,))
 
 
 async def signup(request: Request):
@@ -484,7 +484,7 @@ async def api_key(request: Request):
     with db() as con:
         user = current_user(request, con)
         if not plan_for(user)["api"]:
-            err(403, "API keys are available on the Team plan.", upgrade=True)
+            err(403, "API keys are part of Pro.", upgrade=True)
         if request.method == "DELETE":
             con.execute("UPDATE users SET api_key_hash=NULL, api_key_prefix=NULL WHERE id=?", (user["id"],))
             return JSONResponse({"ok": True})
@@ -1681,7 +1681,7 @@ async def project_jobs(request: Request):
                              (user["id"],)).fetchone()["n"]
         if active >= plan["concurrent_jobs"]:
             err(429, f"{plan['name']} runs {plan['concurrent_jobs']} job(s) at a time. Wait for the current one or cancel it.",
-                upgrade=plan["key"] != "team")
+                upgrade=plan["key"] != "pro")
         est = estimate_credits(spec, n_groups)
         used = usage_for(con, user["id"])["credits"]
         reserved = con.execute("SELECT COALESCE(SUM(estimated_credits),0) AS n FROM jobs WHERE user_id=? AND status IN ('queued','running')",
@@ -1801,7 +1801,7 @@ async def job_file(request: Request):
         plan = plan_for(user)
         project = con.execute("SELECT name FROM projects WHERE id=?", (j["project_id"],)).fetchone()
     if name in ("optimized.stl", "promising.stl") and not plan["export"]:
-        err(403, "Exporting optimized geometry is available on Pro and Team.", upgrade=True)
+        err(403, "Exporting optimized geometry is available on Pro.", upgrade=True)
     f = job_dir(j["id"]) / name
     if not f.exists():
         err(404, "Result not available yet.")
@@ -2006,7 +2006,7 @@ async def job_export(request: Request):
     if fmt == "step":
         from .geometry import cad
         if not plan["export"]:
-            err(403, "Exporting geometry is available on Pro and Team.", upgrade=True)
+            err(403, "Exporting geometry is available on Pro.", upgrade=True)
         if not cad.available():
             err(501, "STEP export needs gmsh on the server.")
         out = jd / "design.step"
@@ -2082,8 +2082,8 @@ async def teams_list(request: Request):
                 mem, inv = teams.members(con, t["id"])
                 out.append({**t, "members": mem, "invites": inv if teams.can(t["role"], "admin") else []})
             return JSONResponse(out)
-        if plan_for(user)["key"] != "team" and not user["is_admin"]:
-            err(403, "Teams are part of the Team plan.", upgrade=True)
+        if plan_for(user)["key"] != "pro" and not user["is_admin"]:
+            err(403, "Teams are part of Pro.", upgrade=True)
     data = await body_json(request)
     name = (data.get("name") or "").strip()[:80]
     if not name:
@@ -2214,8 +2214,8 @@ async def sso_callback(request: Request):
 async def billing_checkout(request: Request):
     data = await body_json(request)
     plan_key = data.get("plan")
-    if plan_key not in ("pro", "team"):
-        err(400, "Choose Pro or Team.")
+    if plan_key != "pro":
+        err(400, "Pro is the only paid plan.")
     with transaction() as con:
         user = current_user(request, con)
         if user["billing_source"] == "guest":
@@ -2303,14 +2303,14 @@ async def license_info(request: Request):
 
 
 async def license_issue(request: Request):
-    """A desktop licence key for a Pro or Team subscriber (bound to their email), valid to the end of
+    """A desktop licence key for a Pro subscriber (bound to their email), valid to the end of
     the billing period plus the grace period, or a year for an owner."""
     from . import license as lic
     with db() as con:
         user = current_user(request, con)
         plan = plan_for(user)
         if plan["key"] not in lic.PLANS:
-            err(403, "Desktop licence keys come with Pro and Team.", upgrade=True)
+            err(403, "Desktop licence keys come with Pro.", upgrade=True)
         now = time.time()
         end = user["current_period_end"]
         expires = end if end and end > now + 7 * 86400 else now + 365 * 86400
@@ -2433,7 +2433,7 @@ async def admin_stats(request: Request):
             "SELECT plan, COUNT(*) AS n FROM users WHERE plan_status IN ('active','trialing','past_due') GROUP BY plan")}
         trialing = con.execute("SELECT COUNT(*) AS n FROM users WHERE plan_status='trialing'").fetchone()["n"]
         paying = {k: con.execute("SELECT COUNT(*) AS n FROM users WHERE plan=? AND plan_status IN ('active','past_due')",
-                                 (k,)).fetchone()["n"] for k in ("pro", "team")}
+                                 (k,)).fetchone()["n"] for k in ("pro",)}
         mrr = sum(PLANS[k]["price_month"] * n for k, n in paying.items())
         users = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
         jobs = {r["status"]: r["n"] for r in con.execute("SELECT status, COUNT(*) AS n FROM jobs GROUP BY status")}

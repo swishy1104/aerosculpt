@@ -102,7 +102,7 @@ export class Propellers {
   add() {
     const { me } = this.ctx;
     if (this.list.length >= me.limits.max_propellers) {
-      return upgradePrompt(`${me.plan_name} simulates up to ${me.limits.max_propellers} propeller${me.limits.max_propellers > 1 ? "s" : ""}. Pro runs four, Team eight.`);
+      return upgradePrompt(`${me.plan_name} simulates up to ${me.limits.max_propellers} propeller${me.limits.max_propellers > 1 ? "s" : ""}.`);
     }
     const pre = PROP_PRESETS["thin-electric"][3];
     const p = { id: Math.random().toString(36).slice(2, 10), name: `Propeller ${this.list.length + 1}`, center: [0, 0, 0],

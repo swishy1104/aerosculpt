@@ -310,7 +310,7 @@ export function upgradePrompt(message) {
     title: "Upgrade to unlock this",
     body: h("div", null,
       h("p", null, message),
-      h("p", { class: "muted small" }, "Pro starts with a free trial. Cancel any time.")),
+      h("p", { class: "muted small" }, "Pro is one plan with everything and no usage meter. It starts with a free trial; cancel any time.")),
     actions: [
       { label: "Not now", kind: "ghost" },
       { label: "See plans", kind: "primary", onClick: () => { location.href = "/app/billing"; } },

@@ -1,4 +1,5 @@
-"""Subscription plans and the limits each one enforces. The server is the source of truth;
+"""Subscription plans and the limits each one enforces: Lite (free) and Pro (one paid plan,
+unlimited use). The server is the source of truth;
 the pricing page and the workspace render from GET /api/plans."""
 from __future__ import annotations
 
@@ -33,29 +34,19 @@ PLANS = {
                      "3 projects · STL, OBJ, STEP upload", "40 compute credits a month"],
     },
     "pro": {
-        "key": "pro", "name": "Pro", "price_month": 49, "tagline": "For engineers shipping airframes",
-        "monthly_credits": 1500, "max_iterations": 60, "fidelities": ["draft", "standard", "high"],
-        "objectives": ALL_OBJECTIVES, "max_aspects": len(ALL_ASPECTS), "aspects": ALL_ASPECTS, "max_top_k": 6,
-        "max_angles": 9, "max_speeds": 12, "max_zones": 20, "max_propellers": 16, "max_iterations_panel": 200, "max_features": 24,
-        "max_projects": None, "max_upload_mb": 150, "max_triangles": 2_000_000,
-        "export": True, "verify": True, "reports": True, "api": False,
-        "priority": 10, "concurrent_jobs": 2, "trial": True,
-        "features": ["Standard and high fidelity", "Sweep 9 angles × 12 airspeeds or Mach numbers",
-                     "60-design optimization of up to 6 parameters, all 6 aspects", "Up to 16 propellers · 200-design supersonic optimization",
-                     "Heating, wall temperature and material limits to Mach 12",
-                     "Unlimited protected regions and keep-inside volumes", "Export optimized STL + reports",
-                     "High-fidelity verification of the winner", "1,500 compute credits a month"],
-    },
-    "team": {
-        "key": "team", "name": "Team", "price_month": 199, "tagline": "For labs, teams and suppliers",
-        "monthly_credits": 6000, "max_iterations": 150, "fidelities": ["draft", "standard", "high"],
+        "key": "pro", "name": "Pro", "price_month": 10, "tagline": "One plan, everything, unlimited use",
+        "monthly_credits": 10 ** 9, "max_iterations": 150, "fidelities": ["draft", "standard", "high"],
         "objectives": ALL_OBJECTIVES, "max_aspects": len(ALL_ASPECTS), "aspects": ALL_ASPECTS, "max_top_k": 8,
         "max_angles": 15, "max_speeds": 20, "max_zones": 40, "max_propellers": 16, "max_iterations_panel": 500, "max_features": 24,
         "max_projects": None, "max_upload_mb": 400, "max_triangles": 5_000_000,
         "export": True, "verify": True, "reports": True, "api": True,
-        "priority": 20, "concurrent_jobs": 4,
-        "features": ["Everything in Pro", "Sweep 15 angles × 20 airspeeds",
-                     "150-design optimization of up to 8 parameters", "6,000 compute credits a month", "REST API keys",
+        "priority": 20, "concurrent_jobs": 4, "trial": True,
+        "features": ["Unlimited runs: no credit meter", "Draft, standard and high fidelity",
+                     "Sweep 15 angles × 20 airspeeds or Mach numbers",
+                     "150-design optimization of up to 8 parameters, all 6 aspects", "Up to 16 propellers · 500-design supersonic and rocket optimization",
+                     "Heating, wall temperature and material limits to Mach 12",
+                     "Unlimited projects, protected regions and keep-inside volumes", "Export optimized STL, STEP + printable reports",
+                     "High-fidelity verification of the winner", "Teams, REST API keys and a desktop licence key",
                      "Highest queue priority, 4 jobs at once"],
     },
 }
@@ -88,6 +79,8 @@ PLANS["guest"] = {
 def plan_for(user) -> dict:
     """Effective plan for a user row (a lapsed trial or cancelled subscription is Lite)."""
     key = user["plan"] if user and user["plan"] in PLANS else "lite"
+    if user and user["plan"] == "team":            # the Team plan was folded into Pro
+        key = "pro"
     if key != "lite" and user["plan_status"] not in ("active", "trialing", "past_due"):
         key = "lite"
     return PLANS[key]
@@ -167,8 +160,8 @@ def check_spec(spec: dict, plan: dict):
         if supersonic:
             return
         if o.get("objective", "drag") not in plan["objectives"]:
-            raise PermissionError("That objective is available on Pro and Team.")
+            raise PermissionError("That objective is available on Pro.")
         if o.get("verify") and not plan["verify"]:
-            raise PermissionError("High-fidelity verification is available on Pro and Team.")
+            raise PermissionError("High-fidelity verification is available on Pro.")
         if o.get("verify") and o["verify"] not in plan["fidelities"]:
             raise PermissionError(f"{o['verify'].title()} verification needs a higher plan.")

@@ -45,7 +45,7 @@ async function render() {
     <div class="row spread no-print" style="margin-bottom:18px">
       <a href="/app/project/${project.id}">&larr; Back to project</a>
       <button class="btn primary" id="print" ${locked ? "disabled" : ""}>${icon("download")}Print / save as PDF</button></div>
-    ${locked ? `<div class="notice warn no-print" style="margin-bottom:18px">${icon("lock")}<div>Printable reports are part of Pro and Team.
+    ${locked ? `<div class="notice warn no-print" style="margin-bottom:18px">${icon("lock")}<div>Printable reports are part of Pro.
       <a href="/app/billing">Upgrade</a> to export this report; every number stays available in your workspace.</div></div>` : ""}
     <div class="row" style="gap:10px"><img src="/static/img/logo.svg" width="30" height="30" alt=""><span class="muted">AeroSculpt engineering report</span></div>
     <h1>${esc(project.name)}</h1>
@@ -151,7 +151,7 @@ async function renderHyper(job, project, r) {
     <div class="row spread no-print" style="margin-bottom:18px">
       <a href="/app/project/${project.id}">&larr; Back to project</a>
       <button class="btn primary" id="print" ${locked ? "disabled" : ""}>${icon("download")}Print / save as PDF</button></div>
-    ${locked ? `<div class="notice warn no-print" style="margin-bottom:18px">${icon("lock")}<div>Printable reports are part of Pro and Team.
+    ${locked ? `<div class="notice warn no-print" style="margin-bottom:18px">${icon("lock")}<div>Printable reports are part of Pro.
       <a href="/app/billing">Upgrade</a> to export this report; every number stays available in your workspace.</div></div>` : ""}
     <div class="row" style="gap:10px"><img src="/static/img/logo.svg" width="30" height="30" alt=""><span class="muted">AeroSculpt engineering report · Supersonic tunnel</span></div>
     <h1>${esc(project.name)}</h1>

@@ -127,7 +127,7 @@ Double-click `Start public link.bat` (or `python scripts/public_link.py you@exam
 starts a Cloudflare quick tunnel (`tools/cloudflared.exe`, no Cloudflare account needed) and the
 app behind it, and prints an `https://….trycloudflare.com` address that works from any browser.
 On that address sign-in is required, demo billing is off and only the listed emails may sign up
-(`ALLOWED_SIGNUP_EMAILS`); the first is the owner (`OWNER_EMAILS`: admin, Team plan, no billing).
+(`ALLOWED_SIGNUP_EMAILS`); the first is the owner (`OWNER_EMAILS`: admin, Pro plan, no billing).
 The site runs on this computer: it is online only while the window is open, and the address
 changes every time it starts. Front-end edits show on reload; Python edits need a restart (and so
 a new address). For a fixed address use a named Cloudflare tunnel (needs a Cloudflare account and
@@ -145,7 +145,7 @@ hour). The account, its projects and its runs are deleted after `GUEST_HOURS` (2
    (set `DOMAIN=your.domain` and fill in `.env` from `.env.example`). Back up the `/data` volume.
 2. **Stripe.** Create an account, then with a *test* key:
    `STRIPE_SECRET_KEY=sk_test_... PUBLIC_URL=https://your.domain python scripts/stripe_setup.py`.
-   It creates the Pro ($49) and Team ($199) monthly prices, the customer-portal configuration
+   It creates the Pro monthly price ($10, the only paid plan: unlimited use), the customer-portal configuration
    and the webhook endpoint, and prints the values for `.env`. Test a full trial sign-up with
    Stripe's test card, then repeat with the live key. Set `ALLOW_DEMO_BILLING=0`.
 3. **Email.** Set the `SMTP_*` variables so password-reset emails are delivered.
@@ -172,7 +172,7 @@ lock and an optimizer range; free ones become search variables (`optimize/spaces
   allows plus generated ideas (boat-tail, rounded front, rear slant, rear diffuser). Each confirmed gain
   starts a new round of ideas on the improved shape (up to 4 rounds) until a round finds nothing above
   the measured error. `"mode": "custom"` keeps the hand-picked aspects.
-- Goals: lowest drag, best L/D, lowest drag keeping the lift (Pro/Team). The lift-based goals are
+- Goals: lowest drag, best L/D, lowest drag keeping the lift (Pro). The lift-based goals are
   indicative until lift passes validation. Results show the drag polar (lift vs drag, one point per
   angle, needs 2+ angles) and lift and drag force vs airspeed.
 - The workspace opens in a simple view; "Show advanced options" brings back shape features, the
@@ -233,7 +233,7 @@ rows under "Rocket methods" on `/validation`; the guide is `/docs#rockets`.
 `python desktop.py` runs AeroSculpt privately on 127.0.0.1 (no sign-in, data in `%LOCALAPPDATA%\AeroSculpt`,
 NVIDIA GPU or CPU) and opens the browser through a launch link that carries a one-time token (`local.py`: the app
 only answers to localhost and only to the browser opened through that link, so no website you visit can drive it).
-Without a licence key it runs the free desktop tier; Pro and Team subscribers generate a key on their account page
+Without a licence key it runs the free desktop tier; Pro subscribers generate a key on their account page
 (`license.py`: Ed25519-signed, verified offline, 30-day grace after expiry; the server signs with
 `LICENSE_PRIVATE_KEY` or `data/license_private.pem`). Account → Desktop app installs the key, toggles the Fusion
 bridge, crash files, update checks and online motor search, saves a diagnostic bundle (`diagnostics.py`) and checks

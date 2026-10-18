@@ -29,7 +29,7 @@ pw.addEventListener("submit", async (e) => {
 function renderApi() {
   const box = $("#api-body");
   if (!me.limits.api) {
-    box.innerHTML = `<a class="btn" href="/app/billing?upgrade=team">Upgrade to Team for API access</a>`;
+    box.innerHTML = `<a class="btn" href="/app/billing?upgrade=pro">Upgrade to Pro for API access</a>`;
     return;
   }
   box.innerHTML = me.has_api_key
@@ -78,7 +78,7 @@ async function renderTeams() {
   const box = $("#teams-body");
   let teams = [];
   try { teams = await api("/api/teams"); } catch (e) { box.innerHTML = `<p class="small muted">${esc(e.message)}</p>`; return; }
-  const canCreate = me.plan === "team" || me.is_admin;
+  const canCreate = me.limits.api || me.is_admin;
   box.innerHTML = teams.map((t) => {
     const admin = ["admin", "owner"].includes(t.role);
     return `<div class="team" data-id="${t.id}" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin:10px 0">
@@ -95,7 +95,7 @@ async function renderTeams() {
         <button class="btn sm ghost audit" type="button" style="margin-top:6px">Audit trail</button><div class="audit-box"></div>` : ""}
     </div>`;
   }).join("") + (canCreate ? `<form id="new-team" class="row" style="gap:6px;margin-top:10px"><input name="name" placeholder="New team name" required style="flex:1">
-    <button class="btn sm" type="submit">Create team</button></form>` : `<p class="small muted">${teams.length ? "" : "You are in no team yet. "}Creating teams is part of the Team plan.</p>`);
+    <button class="btn sm" type="submit">Create team</button></form>` : `<p class="small muted">${teams.length ? "" : "You are in no team yet. "}Creating teams is part of Pro.</p>`);
   const nt = $("#new-team");
   if (nt) nt.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -141,7 +141,7 @@ async function renderDesktop() {
   const when = (ts) => new Date(ts * 1000).toLocaleDateString();
   if (!lic.local) {
     box.innerHTML = `<p class="small">AeroSculpt also runs as a <b>desktop app</b> on your own computer and GPU: nothing leaves the machine.
-        A licence key unlocks your plan's features there${lic.can_issue ? "" : " (Pro and Team)"}; without one it runs the free desktop tier.</p>
+        A licence key unlocks your plan's features there${lic.can_issue ? "" : " (Pro)"}; without one it runs the free desktop tier.</p>
       ${lic.can_issue ? (lic.signing ? `<button class="btn" id="lic-issue" type="button">Generate a desktop licence key</button>
         <p class="small muted" style="margin:8px 0 0">Bound to your email, valid to the end of your billing period plus a 30-day grace period. Paste it in the desktop app under Account → Desktop app, or run <code>AeroSculpt.exe --license KEY</code>.</p>`
         : `<p class="small muted">Licence signing is not configured on this server.</p>`)
@@ -163,12 +163,12 @@ async function renderDesktop() {
   const status = lic.installed
     ? (lic.valid ? `<span class="badge good"><span class="dot"></span>${esc(lic.plan)} licence</span> for ${esc(lic.email || "")}, until ${when(lic.expires)}${lic.why ? ` — ${esc(lic.why)}` : ""}`
       : `<span class="badge bad"><span class="dot"></span>licence problem</span> ${esc(lic.why || "")}`)
-    : `<span class="badge"><span class="dot"></span>free desktop tier</span> — a Pro or Team key unlocks the rest.`;
+    : `<span class="badge"><span class="dot"></span>free desktop tier</span> — a Pro key unlocks the rest.`;
   box.innerHTML = `<p class="small">This copy runs on this computer (version ${esc(me.app_version || "")}, build ${esc(me.build || "")}).</p>
     <p class="small" style="margin:6px 0 10px">${status}</p>
     <div class="row" style="gap:8px;flex-wrap:wrap"><input type="text" id="lic-key" placeholder="Paste a licence key" style="flex:1;min-width:220px">
       <button class="btn sm" id="lic-install" type="button">Install key</button>${lic.installed ? `<button class="btn sm ghost" id="lic-remove" type="button">Remove</button>` : ""}</div>
-    <p class="small muted" style="margin:8px 0 14px">Keys come from the account page of your AeroSculpt subscription (Pro or Team).</p>
+    <p class="small muted" style="margin:8px 0 14px">Keys come from the account page of your AeroSculpt Pro subscription.</p>
     <span class="label">On this computer</span>
     <label class="check"><input type="checkbox" id="ls-fusion" ${ls.fusion_bridge ? "checked" : ""}><span><b>Send to Fusion</b> <span class="muted">talk to the FusionMCPBridge add-in when Fusion runs here</span></span></label>
     <label class="check"><input type="checkbox" id="ls-crash" ${ls.crash_reports !== false ? "checked" : ""}><span><b>Keep crash files</b> <span class="muted">for the diagnostic bundle; never sent by themselves</span></span></label>

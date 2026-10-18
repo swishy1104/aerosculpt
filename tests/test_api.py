@@ -118,7 +118,7 @@ def test_full_flow(client):
     # lift-based goals are offered as indicative (lift is not yet validated) on Pro and Team
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft",
                     "optimize": {"objective": "ld", "iterations": 3, "top_k": 2}}, headers=H)
-    assert r.status_code == 403 and "Pro and Team" in r.json()["error"]
+    assert r.status_code == 403 and "Pro" in r.json()["error"]
     assert "ld" in client.get("/api/plans").json()["objectives_unvalidated"]
     # a valid job is queued and holds its estimated credits
     r = client.post(f"/api/projects/{p['id']}/jobs", json={**base, "kind": "optimize", "fidelity": "draft", "zones": [zone],
@@ -324,7 +324,7 @@ def test_invite_only_signup(client, monkeypatch):
     r = client.post("/api/auth/login", json={"email": "owner@example.com", "password": "correct horse battery 9"}, headers=H)
     assert r.status_code == 200, r.text
     me = client.get("/api/me").json()
-    assert me["plan"] == "team" and me["is_admin"]
+    assert me["plan"] == "pro" and me["is_admin"]
 
 
 def test_templates(client):

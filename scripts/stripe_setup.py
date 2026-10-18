@@ -29,7 +29,7 @@ def main():
     mode = "TEST" if settings.stripe_secret_key.startswith("sk_test") else "LIVE"
     print(f"Stripe {mode} mode")
     out = {}
-    for key in ("pro", "team"):
+    for key in ("pro",):
         plan = PLANS[key]
         prod = find_product(key) or stripe("POST", "/products", {
             "name": f"{settings.app_name} {plan['name']}", "description": plan["tagline"],

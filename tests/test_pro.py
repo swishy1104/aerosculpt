@@ -184,8 +184,8 @@ def test_estimate_and_grid_check_requests(client):
 def test_teams_share_projects_by_role(client):
     _signup(client, "member@example.com")
     _signup(client, "lead@example.com")
-    assert client.post("/api/teams", json={"name": "Aero"}, headers=H).status_code == 403          # Team plan only
-    client.post("/api/billing/checkout", json={"plan": "team"}, headers=H)
+    assert client.post("/api/teams", json={"name": "Aero"}, headers=H).status_code == 403          # Pro only
+    client.post("/api/billing/checkout", json={"plan": "pro"}, headers=H)
     tid = client.post("/api/teams", json={"name": "Aero"}, headers=H).json()["id"]
     assert client.post(f"/api/teams/{tid}/members", json={"email": "member@example.com", "role": "viewer"}, headers=H).json()["status"] == "added"
     assert client.post(f"/api/teams/{tid}/members", json={"email": "later@example.com", "role": "editor"}, headers=H).json()["status"] == "invited"

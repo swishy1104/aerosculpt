@@ -39,7 +39,7 @@ form.addEventListener("submit", async (ev) => {
     if (page === "signup") {
       await api("/api/auth/signup", { method: "POST", body: { ...data, accept_terms: !!data.accept_terms } });
       const plan = qs("plan");
-      location.href = plan === "pro" || plan === "team" ? `/app/billing?upgrade=${plan}` : "/app?welcome=1";
+      location.href = plan === "pro" ? "/app/billing?upgrade=pro" : "/app?welcome=1";
     } else if (page === "login") {
       await api("/api/auth/login", { method: "POST", body: data });
       location.href = nextUrl();

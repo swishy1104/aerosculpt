@@ -45,7 +45,6 @@ class Settings:
     stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
     stripe_webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     stripe_price_pro = os.environ.get("STRIPE_PRICE_PRO", "")
-    stripe_price_team = os.environ.get("STRIPE_PRICE_TEAM", "")
     trial_days = int(os.environ.get("TRIAL_DAYS", "14"))
     # demo billing is a development convenience: off by default on any https deployment
     allow_demo_billing = _bool("ALLOW_DEMO_BILLING", not public_url.startswith("https://"))
@@ -55,7 +54,7 @@ class Settings:
     open_access = _bool("OPEN_ACCESS", public_url.startswith(("http://localhost", "http://127.0.0.1")))
     # invite-only sign-up for a private deployment: comma-separated emails (empty = anyone may sign up)
     allowed_signup_emails = {e.strip().lower() for e in os.environ.get("ALLOWED_SIGNUP_EMAILS", "").split(",") if e.strip()}
-    # the site owner(s): admin with the Team plan, without billing (for a private deployment)
+    # the site owner(s): admin with the Pro plan, without billing (for a private deployment)
     owner_emails = {e.strip().lower() for e in os.environ.get("OWNER_EMAILS", "").split(",") if e.strip()}
     # public guest demo: "Try it without an account" makes a temporary account on the Guest plan
     # (a few credits, draft and standard fidelity, lowest queue priority), deleted after GUEST_HOURS
@@ -69,7 +68,7 @@ class Settings:
     allowed_hosts = {h.strip().lower() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()}
     # what the built-in local user may use: a plan name, or "license" (the installed desktop licence key,
     # the free desktop tier without one)
-    open_access_plan = os.environ.get("OPEN_ACCESS_PLAN", "team").strip().lower()
+    open_access_plan = os.environ.get("OPEN_ACCESS_PLAN", "pro").strip().lower()
     # desktop licence signing (license.py): PEM text or a path; default data/license_private.pem
     license_private_key = os.environ.get("LICENSE_PRIVATE_KEY", "").strip()
     check_updates = _bool("CHECK_UPDATES", False)

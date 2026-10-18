@@ -7,7 +7,7 @@ Starts `cloudflared tunnel --url http://127.0.0.1:8080` (no Cloudflare account n
 the https://<random>.trycloudflare.com address it prints, then starts the app on port 8080 with
 that address as PUBLIC_URL. On an https address sign-in is required, demo billing is off and
 cookies are secure; only the listed emails may create accounts, and the first one is the owner
-(admin, Team plan, no billing). --demo also turns on the guest demo: anyone with the link can
+(admin, Pro plan, no billing). --demo also turns on the guest demo: anyone with the link can
 press "Try the live demo" and get a temporary account (Guest plan: 30 credits, draft and standard
 fidelity, lowest queue priority, deleted after 24 h). The address changes every time
 this is started, and the site is up only while this computer is on and this window is open.

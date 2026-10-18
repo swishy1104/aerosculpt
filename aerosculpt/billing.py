@@ -65,14 +65,12 @@ def stripe(method, path, params=None, idempotency_key=None):
 
 
 def price_for(plan_key):
-    return {"pro": settings.stripe_price_pro, "team": settings.stripe_price_team}.get(plan_key) or None
+    return {"pro": settings.stripe_price_pro}.get(plan_key) or None
 
 
 def plan_for_price(price_id):
     if price_id and price_id == settings.stripe_price_pro:
         return "pro"
-    if price_id and price_id == settings.stripe_price_team:
-        return "team"
     return None
 
 

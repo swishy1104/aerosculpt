@@ -18,7 +18,7 @@ from pathlib import Path
 
 PUBLIC_KEY_B64 = "rzg6RsFjUwJktBRVilRdSpNDUlL3THEaCaFrk0gKCZg="
 GRACE_DAYS = 30
-PLANS = ("pro", "team")
+PLANS = ("pro",)
 
 
 class LicenseError(ValueError):
@@ -56,7 +56,7 @@ def load_private_key(source=None):
 
 def issue(email, plan, days=365, private_key=None, expires_at=None):
     if plan not in PLANS:
-        raise LicenseError("plans with a desktop licence are Pro and Team")
+        raise LicenseError("a desktop licence comes with Pro")
     key = private_key or load_private_key()
     if key is None:
         raise LicenseError("licence signing is not configured on this server")

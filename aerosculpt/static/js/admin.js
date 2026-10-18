@@ -7,7 +7,7 @@ try {
   const tile = (label, value, sub = "") => `<div class="card stat-tile"><div class="label">${label}</div><div class="value">${value}</div><div class="small muted">${sub}</div></div>`;
   $("#tiles").innerHTML = tile("Monthly recurring revenue", "$" + fmtInt(s.mrr), s.billing_mode === "demo" ? "demo billing — not real revenue" : "from active paid plans")
     + tile("Users", fmtInt(s.users), `${fmtInt(s.trialing)} on trial`)
-    + tile("Paying", fmtInt((s.paying.pro || 0) + (s.paying.team || 0)), `Pro ${s.paying.pro || 0} · Team ${s.paying.team || 0}`)
+    + tile("Paying", fmtInt(s.paying.pro || 0), "on Pro")
     + tile("Compute this month", fmtInt(s.credits_this_month) + " credits", `${fmtInt(s.cfd_runs_this_month)} CFD runs`);
   const rows = (obj) => Object.entries(obj).map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${fmtInt(v)}</span>`).join("") || '<span class="k">none</span>';
   $("#jobs").innerHTML = `<div class="kv">${rows(s.jobs)}</div>`;

@@ -48,7 +48,7 @@ export function exportsHTML(result, job, me, fusion) {
     <div class="row wrap" style="gap:8px">
       <a class="btn sm" href="/api/jobs/${job.id}/export/pdf" download>${icon("file")}PDF report</a>
       ${canExport ? `<a class="btn sm ghost" href="/api/jobs/${job.id}/export/step" download title="${tm ? "Smooth CAD solids through the design's own sections" : "A faceted solid of the design"}">${icon("box")}STEP (CAD)</a>`
-        : `<span class="btn sm ghost" aria-disabled="true" title="Pro and Team">${icon("lock")}STEP (Pro)</span>`}
+        : `<span class="btn sm ghost" aria-disabled="true" title="Pro">${icon("lock")}STEP (Pro)</span>`}
       ${hasFlow && !winged ? `<a class="btn sm ghost" href="/api/jobs/${job.id}/export/vtk" download title="Mean flow and surface pressure for ParaView">${icon("wind")}Flow fields (VTK)</a>` : ""}
       ${tm ? `<a class="btn sm ghost" href="/api/jobs/${job.id}/export/fusion-script" download title="A Fusion script that writes the dimensions as user parameters">${icon("code")}Fusion script</a>` : ""}
     </div>

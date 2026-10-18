@@ -29,7 +29,10 @@ function current() {
     if (me.plan_status === "trialing" && me.trial_ends_at) line = `Trial ends ${fmtDate(me.trial_ends_at)}${me.billing_source === "stripe" ? " — your card is charged then unless you cancel." : "."}`;
     else if (me.cancel_at_period_end && me.current_period_end) line = `Cancels on ${fmtDate(me.current_period_end)}; you keep ${esc(me.plan_name)} until then.`;
     else if (me.current_period_end) line = `Renews ${fmtDate(me.current_period_end)}.`;
-  } else line = "Free forever. Upgrade any time — Pro includes a free trial.";
+  } else {
+    const pro = catalog.plans.find((p) => p.key === "pro");
+    line = `Free forever. Pro is everything, unlimited, for $${pro ? pro.price_month : 10} a month — and it starts with a free trial.`;
+  }
   box.innerHTML = `<div class="label">Current plan</div>
     <div class="row" style="gap:10px;margin:4px 0 6px"><span style="font-size:26px;font-weight:750">${esc(me.plan_name)}</span>
       <span class="badge ${me.plan_status === "past_due" ? "bad" : "accent"}">${esc(status)}</span></div>
@@ -61,6 +64,14 @@ function current() {
 function usage() {
   const used = me.usage.credits, total = me.limits.monthly_credits;
   const frac = Math.min(1, used / Math.max(1, total));
+  if (me.credits_off) {
+    $("#usage").innerHTML = `<div class="label">This month</div>
+    <div class="row spread" style="margin:6px 0"><span style="font-size:26px;font-weight:750">Unlimited</span>
+      <span class="muted small">no credit meter on ${esc(me.plan_name)}</span></div>
+    <div class="kv" style="margin-top:14px"><span class="k">CFD runs</span><span class="v">${fmtInt(me.usage.cfd_runs)}</span>
+      <span class="k">Jobs</span><span class="v">${fmtInt(me.usage.jobs)}</span></div>`;
+    return;
+  }
   $("#usage").innerHTML = `<div class="label">This month</div>
     <div class="row spread" style="margin:6px 0"><span style="font-size:26px;font-weight:750">${fmtInt(me.credits_left)}</span>
       <span class="muted small">of ${fmtInt(total)} credits left</span></div>
@@ -77,7 +88,7 @@ function plans() {
     const isCur = me.plan === p.key;
     const card = h("div", { class: "card price-card" + (p.key === "pro" ? " featured" : "") });
     const trial = p.trial && !me.trial_used;
-    card.innerHTML = `<div class="row spread"><h3 style="margin:0">${esc(p.name)}</h3>${p.key === "pro" ? '<span class="badge accent">Most popular</span>' : ""}</div>
+    card.innerHTML = `<div class="row spread"><h3 style="margin:0">${esc(p.name)}</h3>${p.key === "pro" ? '<span class="badge accent">Everything included</span>' : ""}</div>
       <p class="small" style="margin:4px 0 12px">${esc(p.tagline)}</p>
       <div class="price">$${p.price_month}<small> / month</small></div>
       <ul>${p.features.map((f) => `<li>${icon("check")}<span>${esc(f)}</span></li>`).join("")}</ul>`;
@@ -132,4 +143,4 @@ if (qs("checkout") === "success" && !qs("demo") && me.plan === "lite") {
   }, 2000);
 }
 const up = qs("upgrade");
-if (up && me.plan === "lite") document.querySelectorAll(".price-card")[up === "team" ? 2 : 1]?.scrollIntoView({ behavior: "smooth" });
+if (up && me.plan === "lite") document.querySelectorAll(".price-card")[1]?.scrollIntoView({ behavior: "smooth" });

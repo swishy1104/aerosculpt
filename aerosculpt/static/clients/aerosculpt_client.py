@@ -21,7 +21,7 @@ Command line:
     python aerosculpt_client.py download JOB pdf report.pdf
     python aerosculpt_client.py sweep PROJECT --param wing_span=2.0,2.4,2.8     # a batch of analyses
 
-API keys are created on the Account page (Team plan). Every call is a plain HTTPS request with
+API keys are created on the Account page (Pro). Every call is a plain HTTPS request with
 "Authorization: Bearer <key>", so any language can do the same.
 """
 from __future__ import annotations

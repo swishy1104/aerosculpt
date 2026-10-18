@@ -324,7 +324,7 @@
     (Q-criterion) beside streamlines and slices. In the Runs tab, tick two runs and <b>Compare</b> them condition by condition.</p>
 
   <h2 id="teams">Teams and single sign-on</h2>
-  <p>On the Team plan, create a team under Account and invite colleagues by email (someone without an account joins when they first sign in). Share a
+  <p>On Pro, create a team under Account and invite colleagues by email (someone without an account joins when they first sign in). Share a
     project from its Model step. Roles: <b>viewer</b> opens results and downloads reports; <b>editor</b> also changes the design and runs jobs (billed to
     whoever starts them); <b>admin</b> manages members and reads the team's <b>audit trail</b> (who shared, ran, invited or changed what, and when);
     <b>owner</b> can do everything. A server can offer <b>single sign-on</b> through any OpenID Connect provider (Okta, Microsoft Entra ID, Google
@@ -336,7 +336,7 @@
     127.0.0.1 with no sign-in, keeps projects in your user folder, simulates on your NVIDIA graphics card (or the CPU) and opens it in your browser.
     Nothing leaves the computer unless you ask (motor search, update check), which suits CAD that cannot be uploaded. The app only answers to
     localhost and opens through a launch link with a one-time token, so no website you visit can drive it. Without a licence key it runs the free desktop
-    tier; a <b>Pro or Team key</b> from your account page unlocks the rest (checked offline, with a 30-day grace period after it expires). The GPU pack (CUDA
+    tier; a <b>Pro key</b> from your account page unlocks the rest (checked offline, with a 30-day grace period after it expires). The GPU pack (CUDA
     runtime) is a separate download for NVIDIA cards; STEP/IGES import needs gmsh, which is GPL and not bundled. Build it with
     <code>python scripts/build_desktop.py --gpu-pack --installer</code>; <code>AeroSculpt.exe --check</code> says what the computer can use; Account → Desktop
     app saves a diagnostic bundle and checks for updates.</p>
@@ -370,7 +370,7 @@
     <li>Results are engineering estimates. Validate safety-critical designs with independent analysis or testing.</li>
   </ul>
 
-  <h2 id="api">REST API (Team)</h2>
+  <h2 id="api">REST API (Pro)</h2>
   <p>Create a key under <a href="/app/account">Account</a> and send it as a bearer token. All endpoints return JSON.</p>
 <pre># upload a model (STL or OBJ bytes)
 curl -X POST "$HOST/api/projects?filename=uav.stl&amp;name=UAV" \

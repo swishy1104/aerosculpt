@@ -299,7 +299,7 @@ const round = (v) => Math.round(v * 1000) / 1000;
 
 function addZone(type) {
   if (type !== "wheel" && S.zones.filter((q) => q.type !== "wheel").length >= me.limits.max_zones) {
-    return upgradePrompt(`${me.plan_name} allows ${me.limits.max_zones} protected regions. Pro and Team allow many more.`);
+    return upgradePrompt(`${me.plan_name} allows ${me.limits.max_zones} protected regions. Pro allows many more.`);
   }
   const center = frame.bodyToFile([0, 0, 0]).map(round);
   const ext = fileSizeOfBody();
@@ -796,7 +796,7 @@ function renderAspects() {
     card.innerHTML = `<input type="checkbox" ${on ? "checked" : ""} tabindex="-1" aria-hidden="true"><div><div class="t">${esc(a.label)}</div><div class="d">${esc(a.help)}</div></div>`;
     const toggle = () => {
       if (on) opt.aspects = opt.aspects.filter((x) => x !== k);
-      else if (full) return upgradePrompt(`${me.plan_name} can change ${max} design aspects at once. Pro and Team can change all of them.`);
+      else if (full) return upgradePrompt(`${me.plan_name} can change ${max} design aspects at once. Pro can change all of them.`);
       else opt.aspects.push(k);
       renderAspects();
       estimates();
@@ -1896,7 +1896,7 @@ function renderHistoryTab() {
       <a class="btn sm ghost" href="/app/report/${shownJob.id}" target="_blank">${icon("file")}Report</a></div>
     <div id="hist"></div>`;
   $("#dl").addEventListener("click", () => {
-    if (!me.limits.export) return upgradePrompt("Exporting optimized geometry is part of Pro and Team. Your results stay here either way.");
+    if (!me.limits.export) return upgradePrompt("Exporting optimized geometry is part of Pro. Your results stay here either way.");
     location.href = `/api/jobs/${shownJob.id}/files/optimized.stl`;
   });
   if ($("#lead-view")) {
@@ -1911,7 +1911,7 @@ function renderHistoryTab() {
       } catch (e) { handleError(e); }
     });
     $("#lead-dl").addEventListener("click", () => {
-      if (!me.limits.export) return upgradePrompt("Exporting geometry is part of Pro and Team.");
+      if (!me.limits.export) return upgradePrompt("Exporting geometry is part of Pro.");
       location.href = `/api/jobs/${shownJob.id}/files/promising.stl`;
     });
   }

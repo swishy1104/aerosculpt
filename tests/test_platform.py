@@ -59,7 +59,7 @@ def test_licence_keys_verify_offline_and_expire_with_grace(keypair, monkeypatch)
     # a key signed by someone else's private key is rejected by our public key
     other, _ = keypair.__class__((None, None)) if False else (None, None)
     from cryptography.hazmat.primitives.asymmetric import ed25519
-    forged = lic.issue("x@y.z", "team", private_key=ed25519.Ed25519PrivateKey.generate())
+    forged = lic.issue("x@y.z", "pro", private_key=ed25519.Ed25519PrivateKey.generate())
     assert "signature" in lic.status(forged, now)["why"]
 
 

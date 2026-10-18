@@ -147,6 +147,7 @@ def init_db():
         _add_column(con, "projects", "team_id", "INTEGER")
         _add_column(con, "audit", "team_id", "INTEGER")
         _add_column(con, "users", "sso_subject", "TEXT")
+        con.execute("UPDATE users SET plan='pro' WHERE plan='team'")      # the Team plan was folded into Pro
         teams_migrate(con)
 
 
