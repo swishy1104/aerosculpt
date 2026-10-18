@@ -1195,8 +1195,8 @@ def _clean_material(m):
 
 
 def _clean_props(items):
-    if not isinstance(items, list) or len(items) > 8:
-        err(400, "Invalid propellers.")
+    if not isinstance(items, list) or len(items) > 16:
+        err(400, "Up to 16 propellers.")
     out = []
     for p in items:
         if not isinstance(p, dict):

@@ -242,7 +242,7 @@ def test_three_tunnels(client):
     client.post("/api/auth/logout", headers=H)
     signup(client, "tunnels@example.com")
     lim = client.get("/api/me").json()["limits"]
-    assert lim["max_propellers"] == 1 and lim["max_iterations_panel"] == 30   # the workspace sizes its sliders from these
+    assert lim["max_propellers"] == 16 and lim["max_iterations_panel"] == 30   # the workspace sizes its sliders from these
     samples = {s["key"]: s for s in client.get("/api/samples").json()}
     assert samples["capsule"]["tunnel"] == "supersonic" and samples["rc-trainer"]["propellers"] == 1
 
@@ -286,10 +286,14 @@ def test_three_tunnels(client):
     slow = dict(q["settings"]["envelope"], speed_min=1.0)
     r = client.post(f"/api/projects/{q['id']}/jobs", json={"kind": "analyze", "envelope": slow}, headers=H)
     assert r.status_code == 400 and "2 m/s" in r.json()["error"]
-    two = client.patch(f"/api/projects/{q['id']}", json={"settings": {"propellers": [prop, dict(prop, id="b")]}}, headers=H)
+    # any number of propellers up to sixteen (a quad, a hex, an octocopter); seventeen is refused
+    two = client.patch(f"/api/projects/{q['id']}", json={"settings": {"propellers": [dict(prop, id=f"p{k}") for k in range(4)]}}, headers=H)
     assert two.status_code == 200
     r = client.post(f"/api/projects/{q['id']}/jobs", json={"kind": "analyze", "envelope": dict(slow, speed_min=10)}, headers=H)
-    assert r.status_code == 403 and "propeller" in r.json()["error"]
+    assert r.status_code == 201 and len(r.json()["spec"]["propellers"]) == 4
+    client.post(f"/api/jobs/{r.json()['id']}/cancel", headers=H)
+    many = client.patch(f"/api/projects/{q['id']}", json={"settings": {"propellers": [dict(prop, id=f"p{k}") for k in range(17)]}}, headers=H)
+    assert many.status_code == 400 and "16" in many.json()["error"]
 
     # live propeller estimate: more blades, more thrust and a faster slipstream
     two = dict(prop, id="p2", blades=2, family="wide")
