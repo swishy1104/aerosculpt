@@ -7,6 +7,7 @@
     python run.py init               create the database
     python run.py make-admin EMAIL   grant admin to an existing account
     python run.py validate           run the solver validation suite (writes validation_results.json)
+    python run.py test-email ADDRESS send a test message through the configured SMTP settings
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ def worker_main():
 def main(argv=None):
     ap = argparse.ArgumentParser(description="AeroSculpt server")
     ap.add_argument("command", nargs="?", default="serve",
-                    choices=["serve", "web", "worker", "init", "make-admin", "validate"])
+                    choices=["serve", "web", "worker", "init", "make-admin", "validate", "test-email"])
     ap.add_argument("arg", nargs="?")
     ap.add_argument("--host")
     ap.add_argument("--port", type=int)
@@ -55,6 +56,14 @@ def main(argv=None):
             n = con.execute("UPDATE users SET is_admin=1 WHERE email=?", ((a.arg or "").lower(),)).rowcount
         print("ok" if n else "no such user")
         return
+    if a.command == "test-email":
+        from aerosculpt import emailer
+        if not settings.smtp_host:
+            print("SMTP is not configured: set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD and SMTP_FROM in .env")
+            return 1
+        ok = emailer.send(a.arg or "", "AeroSculpt test message", "If you can read this, password-reset emails will be delivered.")
+        print("sent" if ok else "not sent (see the error above)")
+        return 0 if ok else 1
     if a.command == "validate":
         from aerosculpt.cfd.validation import run_groups, run_suite
         if a.arg:   # e.g. "validate supersonic,rc": just those tunnels, merged into the stored results
