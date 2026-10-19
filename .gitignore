@@ -29,3 +29,4 @@ exe.err
 tools/public_site.log
 Start public site in background.bat
 Stop public site.bat
+scripts/site_watchdog.ps1
